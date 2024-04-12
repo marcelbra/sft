@@ -1,0 +1,13 @@
+datasets
+pandas
+torch
+numpy
+transformers
+huggingface_hub
+peft
+bitsandbytes
+tqdm
+trl
+packaging
+quanto
+wandb
