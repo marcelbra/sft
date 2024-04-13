@@ -17,7 +17,9 @@ from src.arguments import (
 from src.training import (
     get_last_checkpoint,
     get_model_and_tokenizer,
-    get_data_module,
+    get_dataset,
+    get_formatting_func,
+    get_data_collator,
     print_trainable_parameters,
     verify_datatypes_parameter_counts,
     SavePeftModelCallback
@@ -26,7 +28,6 @@ from src.training import (
 def train(cli_args: Namespace):
 
     print("-- Get args")
-
     parser = H4ArgumentParser((
         ModelArguments, DataArguments, SFTTrainingArguments
     ))
@@ -39,7 +40,8 @@ def train(cli_args: Namespace):
         print(args, "\n")
     model_args, data_args, training_args = all_args
 
-    print("-- Get model, tokenizer and data")
+    if not training_args.run_name:
+        raise ValueError("You must provide a `run_name` in the config!")
 
     output_dir_with_name = os.path.join(training_args.output_dir, training_args.run_name)
     if not os.path.exists(output_dir_with_name):
@@ -47,19 +49,26 @@ def train(cli_args: Namespace):
 
     set_seed(training_args.seed)
 
+    print("-- Get model, tokenizer and data")
     checkpoint_dir = get_last_checkpoint(output_dir_with_name, training_args.continue_on_ckpt)
     model, tokenizer = get_model_and_tokenizer(model_args, training_args, checkpoint_dir)
-    data_module = get_data_module(tokenizer=tokenizer, data_args=data_args, model_args=model_args)
+    
+    # Dataset and templates
+    dataset = get_dataset(data_args=data_args)
+    templating_args = {}
+    if not data_args.packing:
+        templating_args["data_collator"] = get_data_collator(tokenizer=tokenizer)
+        templating_args["formatting_func"] = get_formatting_func()
 
     print("-- Initalize trainer")
-
     trainer = SFTTrainer(
         model=model,
         tokenizer=tokenizer,
         args=training_args,
-        dataset_text_field="input_output",
         max_seq_length=training_args.max_seq_length,
-        **data_module,
+        packing=data_args.packing,
+        train_dataset=dataset,
+        **templating_args
     )
     trainer.add_callback(SavePeftModelCallback)
 
@@ -67,7 +76,6 @@ def train(cli_args: Namespace):
     verify_datatypes_parameter_counts(model)
 
     print("-- Start training")
-
     # Note: `resume_from_checkpoint` currently not supported for
     # adapter checkpoints by HF. Currently adapter checkpoint is
     # reloaded as expected but optimizer/scheduler states are not.

@@ -125,6 +125,7 @@ class SFTTrainingArguments(TrainingArguments):
     """
     Arguments for Training.
     """
+    run_name: str = field(default="", metadata={"help": "The name of the run"})
     double_quant: bool = field(default=True, metadata={"help": "Compress the quantization statistics through double quantization."})
     max_memory_MB: int = field(default=80000, metadata={"help": "Free memory per gpu."})
     output_dir: str = field(default='./output', metadata={"help": 'The output dir for logs and checkpoints'})
@@ -153,7 +154,7 @@ class SFTTrainingArguments(TrainingArguments):
     report_to: Optional[List[str]] = field(default_factory=lambda: ["wandb"], metadata={"help": "The list of integrations to report the results and logs to."})
     continue_on_ckpt: bool = field(default=False,metadata={"help": "Whether to continue training from checkpoint if one was found."})
     train_on_source: Optional[bool] = field(default=False, metadata={"help": "Whether to train on the input in addition to the target text."})
-    run_name: str = field(metadata={"help": "The name of the run", "required": True})  
+    
 
 @dataclass
 class GenerationArguments:
@@ -225,6 +226,6 @@ class DataArguments:
     source_max_len: int = field(default=1024, metadata={"help": "Maximum source sequence length. Sequences will be right padded (and possibly truncated)."},)
     target_max_len: int = field(default=256, metadata={"help": "Maximum target sequence length. Sequences will be right padded (and possibly truncated)."},)
     packing: bool = field(default=False, metadata={"help": "Apply packing when fine-tuning or not"})
-    dataset_dir: Optional[str] = field(default="data/train_formatted_data.json", metadata={"help": "The directory path to the data.", "required": True})
+    data_dir: Optional[str] = field(default="", metadata={"help": "The directory path to the data."})
     dataset_name: Optional[str] = field(default="data/train_formatted_data.json", metadata={"help": "The file name (and possibly path) to the file.", "required": True})
     load_with_result: Optional[bool] = field(default=True, metadata={"help": "In wich format to load the GSM8K dataset."})

@@ -11,7 +11,8 @@ from typing import Tuple, List, Optional
 
 from trl import DataCollatorForCompletionOnlyLM
 from accelerate import PartialState
-from datasets import Dataset
+from datasets import Dataset, load_dataset
+
 from peft.tuners.lora import LoraLayer
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 from transformers import (
@@ -165,44 +166,29 @@ def get_model_and_tokenizer(
 
     return model, tokenizer
 
+def get_dataset(data_args: DataArguments):
+    full_dataset_path = os.path.join(data_args.data_dir, data_args.dataset_name)
+    return load_dataset("json", data_files=full_dataset_path, split="train")
 
-def get_data_module(
-    tokenizer: AutoTokenizer, 
-    data_args: DataArguments,
-    model_args: ModelArguments,
-    training_args: SFTTrainingArguments
-) -> dict:
+    # dataset = Dataset.from_json(path_or_paths=full_dataset_path)
+    # # dataset = dataset.map(lambda x: {'input_output': x['input'] + x['output']})
+    # return dataset.remove_columns([col for col in dataset.column_names if col not in ['input', 'output']])
 
-    full_dataset_path = os.path.join(data_args.dataset_dir, data_args.dataset_name)
-    full_dataset = Dataset.from_json(path_or_paths=full_dataset_path)
-    dataset = full_dataset.map(lambda x: {'input_output': x['input'] + x['output']})
-    dataset = dataset.remove_columns([col for col in dataset.column_names if col not in ['input_output']])
 
-    data_module = {
-        "packing": data_args.packing,
-        "train_dataset": dataset,
-    }
 
-    if not data_args.packing and not training_args.train_on_source:
+def get_formatting_func() -> callable:
 
-        def get_response_template(model_name, tokenizer):
-            if "gemma" in model_name:
-                return "<start_of_turn>model\n"
-            elif "llama" in model_name:
-                temp = "\n [/INST] "
-                template_ids = tokenizer.encode(temp, add_special_tokens=False)[2:]
-                return template_ids
-            elif "zephyr" in model_name:
-                return "\n<|assistant|>\n"
-            else:
-                return "<start_of_turn>model\n" # ChatLM as default
-        
-        data_collator = DataCollatorForCompletionOnlyLM(get_response_template(model_args.model_name_or_path, tokenizer), tokenizer=tokenizer)
-        
-        return dict(**data_module, data_collator=data_collator)
-    
-    return data_module
+    def _get_formatting_func(example):
+        return [
+            f"### Question: {example['prompt'][i]}\n ### Answer: {example['completion'][i]}"
+            for i in range(len(example['prompt']))
+        ]
 
+    return _get_formatting_func
+
+def get_data_collator(tokenizer) -> str:
+    response_template = " ### Answer:"
+    return DataCollatorForCompletionOnlyLM(response_template, tokenizer=tokenizer)
 
 def get_last_checkpoint(checkpoint_dir: str, continue_on_ckpt: bool, ) -> Tuple[Optional[str], bool]:
     

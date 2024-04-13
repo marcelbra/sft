@@ -14,13 +14,18 @@ messages = [
     }
 ]
 
+print("Start: Loading model")
 model = AutoModelForCausalLM.from_pretrained(
     model_name_or_path,
     torch_dtype=torch.bfloat16,
     cache_dir=cache_dir, 
     device_map="auto"
 )
+print("Done: Loading model")
+
+print("Start: Load adapter")
 model = PeftModel.from_pretrained(model, adapter_model_name)
+print("Done: Load adapter")
 
 model.generation_config = GenerationConfig.from_pretrained(model_name_or_path)
 model.generation_config.do_sample = False
@@ -28,12 +33,17 @@ model.generation_config.num_beams = 1
 model.generation_config.temperature = None
 model.generation_config.top_p = None
 model.generation_config.pad_token_id = model.generation_config.eos_token_id
-print(model.generation_config)
+print(f"Generation config:\n{model.generation_config}")
 
+print("Start: Load tokeizer")
 tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+print("Done: Load tokeizer")
 
+formatted_string = tokenizer.apply_chat_template(messages, tokenize=False)
 input_tensor = tokenizer.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt")
-outputs = model.generate(input_tensor.to(model.device), max_new_tokens=1000)
+print(f"Chat template formatted string: {formatted_string}")
 
+print("Generate output")
+outputs = model.generate(input_tensor.to(model.device), max_new_tokens=1000)
 result = tokenizer.decode(outputs[0][input_tensor.shape[1]:], skip_special_tokens=True)
 print(result)
