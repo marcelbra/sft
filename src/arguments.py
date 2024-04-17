@@ -1,19 +1,13 @@
 import os
-# import sys
 
-from typing import Any, Dict, List, Optional #,NewType Tuple, Union
+from typing import Any, Dict, List, Optional
 from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass, field, fields
 
 from transformers import (
     HfArgumentParser,
     TrainingArguments
-    # MODEL_FOR_CAUSAL_LM_MAPPING,
 )
-
-# MODEL_CONFIG_CLASSES = list(MODEL_FOR_CAUSAL_LM_MAPPING.keys())
-# MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-# DataClassType = NewType("DataClassType", Any)
 
 
 def get_arguments() -> Namespace:
@@ -25,23 +19,8 @@ def get_arguments() -> Namespace:
     :return: The arguments.
     """
     parser = ArgumentParser()
-    _get_args_from_cl(parser)
+    parser.add_argument("--config", type=str, help="Specifies the path to the config.",)
     return parser.parse_args()
-
-
-def _get_args_from_cl(parser: ArgumentParser) -> ArgumentParser:
-    """
-    Adds all the arguments to the parser.
-
-    :param parser: The parser to add the arguments to.
-    :return: The parser with the added arguments.
-    """
-    parser.add_argument(
-        "--config",
-        type=str,
-        help="Specifies the path to the config.",
-    )
-    return parser
 
 
 class H4ArgumentParser(HfArgumentParser):
@@ -102,23 +81,6 @@ class H4ArgumentParser(HfArgumentParser):
 
         return outputs
 
-    #### Was commented out on April 12th 2024, if you see this a few weeks later: remove
-    # def parse(self) -> DataClassType | Tuple[DataClassType]:
-    #     if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-    #         # If we pass only one argument to the script and it's the path to a YAML file,
-    #         # let's parse it to get our arguments.
-    #         output = self.parse_yaml_file(os.path.abspath(sys.argv[1]))
-    #     # parse command line args and yaml file
-    #     elif len(sys.argv) > 2 and sys.argv[1].endswith(".yaml"):
-    #         output = self.parse_yaml_and_args(os.path.abspath(sys.argv[1]), sys.argv[2:])
-    #     # parse command line args only
-    #     else:
-    #         output = self.parse_args_into_dataclasses()
-
-    #     if len(output) == 1:
-    #         output = output[0]
-    #     return output
-
 
 @dataclass
 class SFTTrainingArguments(TrainingArguments):
@@ -143,7 +105,7 @@ class SFTTrainingArguments(TrainingArguments):
     lr_scheduler_type: str = field(default='constant', metadata={"help": 'Learning rate schedule. Constant a bit better than cosine, and has advantage for analysis'})
     warmup_ratio: float = field(default=0.03, metadata={"help": 'Fraction of steps to do a warmup for'})
     logging_steps: int = field(default=10, metadata={"help": 'The frequency of update steps after which to log the loss'})
-    group_by_length: bool = field(default=True, metadata={"help": 'Group sequences into batches with same length. Saves memory and speeds up training considerably.'})
+    group_by_length: bool = field(default=False, metadata={"help": 'Group sequences into batches with same length. Saves memory and speeds up training considerably.'})
     save_strategy: str = field(default='epoch', metadata={"help": 'When to save checkpoints'})
     save_steps: int = field(default=250, metadata={"help": 'How often to save a model'})
     save_total_limit: int = field(default=40, metadata={"help": 'How many checkpoints to save before the oldest is overwritten'})
@@ -154,7 +116,9 @@ class SFTTrainingArguments(TrainingArguments):
     report_to: Optional[List[str]] = field(default_factory=lambda: ["wandb"], metadata={"help": "The list of integrations to report the results and logs to."})
     continue_on_ckpt: bool = field(default=False,metadata={"help": "Whether to continue training from checkpoint if one was found."})
     train_on_source: Optional[bool] = field(default=False, metadata={"help": "Whether to train on the input in addition to the target text."})
-    
+    max_memory_MB: Optional[int] = field(default=24000, metadata={"help": "Available memory per GPU."})
+    full_finetune: Optional[bool] = field(default=False, metadata={"help": "Whether to perform full fine-tuning."})
+    predict_with_generate: Optional[bool] = field(default=False, metadata={"help": ""})
 
 @dataclass
 class GenerationArguments:
@@ -184,7 +148,7 @@ class ModelArguments:
     Arguments for model, tokenizer, lora.
     """
     model_name_or_path: Optional[str] = field(default=None, metadata={ "help": ("The model checkpoint for weights initialization. Don't set if you want to train a model from scratch.")},)
-    torch_dtype: Optional[str] = field(default=None, metadata={"help": ("Override the default `torch.dtype` and load the model under this dtype. If `auto` is passed, the dtype will be automatically derived from the model's weights."), "choices": ["auto", "bfloat16", "float16", "float32"],},)
+    torch_dtype: Optional[str] = field(default="bfloat16", metadata={"help": ("Override the default `torch.dtype` and load the model under this dtype. If `auto` is passed, the dtype will be automatically derived from the model's weights."), "choices": ["auto", "bfloat16", "float16", "float32"],},)
     tokenizer_name_or_path: Optional[str] = field(default=None, metadata={"help": ("The path to the tokenizer. Useful if you want to use a different tokenizer to the one stored in `model_name_or_path`.")},)
     trust_remote_code: bool = field(default=False, metadata={"help": "Trust remote code when loading a model."})
     use_flash_attention_2: bool = field(default=False, metadata={"help": ("Whether to use flash attention 2. You must install this manually by running `pip install flash-attn --no-build-isolation`")},)
