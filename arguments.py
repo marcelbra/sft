@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, fields
 
 from transformers import (
     HfArgumentParser,
-    TrainingArguments
+    Seq2SeqTrainingArguments
 )
 
 
@@ -83,7 +83,7 @@ class H4ArgumentParser(HfArgumentParser):
 
 
 @dataclass
-class SFTTrainingArguments(TrainingArguments):
+class TrainingArguments(Seq2SeqTrainingArguments):
     """
     Arguments for Training.
     """
@@ -119,8 +119,9 @@ class SFTTrainingArguments(TrainingArguments):
     max_memory_MB: Optional[int] = field(default=24000, metadata={"help": "Available memory per GPU."})
     full_finetune: Optional[bool] = field(default=False, metadata={"help": "Whether to perform full fine-tuning."})
     predict_with_generate: Optional[bool] = field(default=False, metadata={"help": ""})
+    remove_unused_columns: Optional[bool] = field(default=False, metadata={"help": ""})
 
-@dataclass
+@dataclass  
 class GenerationArguments:
     """
     Aguments for generation during inference. More info: https://shorturl.at/amAFJ
@@ -187,8 +188,8 @@ class DataArguments:
     truncation_side: Optional[str] = field(default=None, metadata={"help": "Truncation side to use for the tokenizer."})
     auto_insert_empty_system_msg: bool = field(default=True, metadata={"help": ("Whether to automatically insert an empty system message as the first message if `system` is mentioned in the chat template.")})
     max_train_samples: Optional[int] = field(default=None, metadata={"help": "For debugging purposes or quicker training, truncate the number of training examples to this value if set."})
-    source_max_len: int = field(default=1024, metadata={"help": "Maximum source sequence length. Sequences will be right padded (and possibly truncated)."},)
-    target_max_len: int = field(default=256, metadata={"help": "Maximum target sequence length. Sequences will be right padded (and possibly truncated)."},)
+    source_max_len: int = field(default=2000, metadata={"help": "Maximum source sequence length. Sequences will be right padded (and possibly truncated)."},)
+    target_max_len: int = field(default=1000, metadata={"help": "Maximum target sequence length. Sequences will be right padded (and possibly truncated)."},)
     packing: bool = field(default=False, metadata={"help": "Apply packing when fine-tuning or not"})
     data_dir: Optional[str] = field(default="", metadata={"help": "The directory path to the data."})
     dataset_name: Optional[str] = field(default="data/train_formatted_data.json", metadata={"help": "The file name (and possibly path) to the file.", "required": True})

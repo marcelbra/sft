@@ -135,7 +135,7 @@ Command:
 sbatch --wrap=" \
     cd repos/sft; \
     python3 evaluate.py \
-    --raw /cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output/deepseek-llm-7b-base-baseline-without-packing/raw_test_results.json \
-    --processed /cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output/deepseek-llm-7b-base-baseline-without-packing/processed_test_results.json \
-    --metrics /cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output/deepseek-llm-7b-base-baseline-without-packing/metrics_test_results.json"
+    --raw /cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output/deepseek-7b-base-baseline/raw_test_results.json \
+    --processed /cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output/deepseek-7b-base-baseline/processed_test_results.json \
+    --metrics /cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output/deepseek-7b-base-baseline/metrics_test_results.json"
 """
