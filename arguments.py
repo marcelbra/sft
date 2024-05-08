@@ -54,7 +54,7 @@ def get_arguments() -> Namespace:
     training_args.run_name = cli_args.run_name
     delattr(cli_args, 'run_name')
     print(f"Run name: {training_args.run_name}")
-    print(f"Formatting template: {cli_args.formatting_template}")
+    print(f"Formatting template:\n{cli_args.formatting_template}")
     print(f"Data path: {cli_args.data_path}")
     print(f"Data path: {cli_args.data_path}")
     trainings_args_path = os.path.join(OUTPUT_DIR, training_args.run_name, TRAINING_ARGS_FILE_NAME)
@@ -62,7 +62,7 @@ def get_arguments() -> Namespace:
         **vars(model_args), **vars(data_args), **vars(training_args), **vars(cli_args)
     )
     with open(trainings_args_path, "w") as f:
-        json.dump(vars(all_args), f, indent=4, ensure_ascii=False)
+        json.dump(str(all_args), f, indent=4, ensure_ascii=False)
     return all_args, training_args
 
 
