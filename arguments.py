@@ -2,7 +2,7 @@ import os
 import json
 
 from argparse import ArgumentParser, Namespace
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 import argparse
@@ -10,41 +10,28 @@ import transformers
 
 from settings import TRAINING_ARGS_FILE_NAME, OUTPUT_DIR
 
-def get_arguments() -> Namespace:
-    """
-    Gets the arguments from the command line or accepts a pre-defined list
-    of arguments such that it can be used programatically.
-
-    :param predefined_args: The pre-defined arguments.
-    :return: The arguments.
-    """
+def get_inference_arguments() -> Namespace:
     parser = ArgumentParser()
-    parser.add_argument(
-        "--model_name_or_path",
-        type=str,
-        default="deepseek-ai/deepseek-llm-7b-base"
-    )
-    parser.add_argument(
-        "--run_name",
-        type=str
-    )
-    parser.add_argument(
-        "--data_path",
-        type=str,
-        help="Adds a default data directory to the front, only the specification starting _from_ data directory is needed."
-    )
-    parser.add_argument(
-        "--formatting_template",
-        type=str,
-        default="### Instruction:\n{}\n### Response:\n"
-    )
-    parser.add_argument(
-        "--max_train_samples",
-        type=int,
-        default=None,
-        help="For debugging. Cuts the amount of training samples."
-    )
+    parser.add_argument("--run_name", type=str)
+    parser.add_argument("--data_path", type=str, help="Adds a default data directory to the front, only the json specification is needed.")
+    parser.add_argument("--formatting_template", type=str, default="### Instruction:\n{}\n### Response:\n")
+    parser.add_argument("--model_name_or_path", type=str, default="deepseek-ai/deepseek-llm-7b-base")
+    parser.add_argument("--output_dir", type=str, help="Specifies the path to the directory where everything is happenung..", default="/cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output/")
+    parser.add_argument("--data_dir", type=str, help="Adds a default data directory to the front, only the json specification is needed.",default="/cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/data")
+    parser.add_argument("--target_file_name", type=str, default="predictions.json")
+    parser.add_argument("--start_from", type=int, default=None)
+    parser.add_argument("--amount_samples", type=int, default=None)
+    return parser.parse_args()
+
+def get_arguments() -> Namespace:
+    parser = ArgumentParser()
+    parser.add_argument("--model_name_or_path", type=str, default="deepseek-ai/deepseek-llm-7b-base")
+    parser.add_argument("--run_name", type=str)
+    parser.add_argument("--data_path", type=str, help="Adds a default data directory to the front, only the specification starting _from_ data directory is needed.")
+    parser.add_argument("--formatting_template", type=str, default="### Instruction:\n{}\n### Response:\n")
+    parser.add_argument("--max_train_samples", type=int, default=None, help="For debugging. Cuts the amount of training samples.")
     cli_args = parser.parse_args()
+    # TODO: refactor
     hfparser = transformers.HfArgumentParser((
         ModelArguments, DataArguments, TrainingArguments, GenerationArguments
     ))
@@ -115,14 +102,14 @@ class TrainingArguments(transformers.TrainingArguments):
 
 @dataclass
 class GenerationArguments:
-    max_new_tokens: Optional[int] = field(default=512)
+    max_new_tokens: Optional[int] = field(default=1024)
     min_new_tokens: Optional[int] = field(default=None)
     do_sample: Optional[bool] = field(default=False)
     num_beams: Optional[int] = field(default=1)
     num_beam_groups: Optional[int] = field(default=1)
     penalty_alpha: Optional[float] = field(default=None)
     use_cache: Optional[bool] = field(default=True)
-    temperature: Optional[float] = field(default=1.0)
+    temperature: Optional[float] = field(default=None)
     top_k: Optional[int] = field(default=50)
     top_p: Optional[float] = field(default=1.0)
     typical_p: Optional[float] = field(default=1.0)
@@ -130,3 +117,7 @@ class GenerationArguments:
     repetition_penalty: Optional[float] = field(default=1.0)
     length_penalty: Optional[float] = field(default=1.0)
     no_repeat_ngram_size: Optional[int] = field(default=0)
+
+    def as_dict(self) -> dict:  
+        """Converts the dataclass instance to a dictionary."""  
+        return asdict(self)  

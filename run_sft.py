@@ -399,7 +399,7 @@ sbatch \
     --wrap="python3 sft/run_sft.py \
         --run_name deepseek-7b-base-m1-2 \
         --data_path decomposed/train/with_result/1/data.json";
-Submitted batch job 58094213
+Submitted batch job 58133199
 
 M1-instruct
 sbatch \
@@ -408,7 +408,7 @@ sbatch \
     --mem-per-cpu=8G \
     --wrap="python3 sft/run_sft.py \
         --run_name deepseek-7b-base-m1-instruct \
-        --formatting_template 'Generate the first step of the reasoning chain.\n### Instruction:\n{}\n### Response:\n'
+        --formatting_template 'Generate the first step of the reasoning chain.\n### Instruction:\n{}\n### Response:\n' \
         --data_path decomposed/train/with_result/1/data.json";
-Submitted batch job 58094270
+Submitted batch job 58133269
 """
