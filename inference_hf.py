@@ -1,60 +1,39 @@
 import os
 import json
 
-from typing import List
+from dataclasses import dataclass, field, asdict
+from typing import Optional, List
+from argparse import ArgumentParser, Namespace
 
+from tqdm import tqdm
 import torch
 from peft import PeftModel
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
-from argparse import ArgumentParser, Namespace
-from tqdm import tqdm
 
+GENERATION_CONFIG_FILE_NAME = "generation_args.json"
 
-def _get_args_from_cl(parser: ArgumentParser) -> ArgumentParser:
-    """
-    Adds all the arguments to the parser.
+@dataclass
+class GenerationArguments:
+    max_new_tokens: Optional[int] = field(default=1024)
+    min_new_tokens: Optional[int] = field(default=None)
+    do_sample: Optional[bool] = field(default=False)
+    num_beams: Optional[int] = field(default=1)
+    num_beam_groups: Optional[int] = field(default=1)
+    penalty_alpha: Optional[float] = field(default=None)
+    use_cache: Optional[bool] = field(default=True)
+    temperature: Optional[float] = field(default=None)
+    top_k: Optional[int] = field(default=50)
+    top_p: Optional[float] = field(default=1.0)
+    typical_p: Optional[float] = field(default=1.0)
+    diversity_penalty: Optional[float] = field(default=0.0)
+    repetition_penalty: Optional[float] = field(default=1.0)
+    length_penalty: Optional[float] = field(default=1.0)
+    no_repeat_ngram_size: Optional[int] = field(default=0)
 
-    :param parser: The parser to add the arguments to.
-    :return: The parser with the added arguments.
-    """
-    parser.add_argument(
-        "--model_name_or_path",
-        type=str,
-        default="deepseek-ai/deepseek-llm-7b-base"
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        help="Assumes the adapter is in here, too.",
-        default="/cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output"
-    ),
-    parser.add_argument(
-        "--run_name",
-        type=str
-    )
-    parser.add_argument(
-        "--data_dir",
-        type=str,
-        help="Adds a default data directory to the front, only the json specification is needed.",
-        default="/cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/data"
-    )
-    parser.add_argument(
-        "--data_path",
-        type=str,
-        help="Adds a default data directory to the front, only the json specification is needed."
-    )
-    parser.add_argument(
-        "--target_file_name",
-        type=str,
-        default="predictions_hf.json"
-    )
-    parser.add_argument(
-        "--formatting_template",
-        type=str,
-        default="### Instruction:\n{}\n### Response:\n"
-    )
-    return parser
+    def as_dict(self) -> dict:  
+        """Converts the dataclass instance to a dictionary."""  
+        return asdict(self)  
 
 def get_arguments() -> Namespace:
     """
@@ -65,7 +44,13 @@ def get_arguments() -> Namespace:
     :return: The arguments.
     """
     parser = ArgumentParser()
-    _get_args_from_cl(parser)
+    parser.add_argument("--run_name", type=str)
+    parser.add_argument("--data_path", type=str, help="Adds a default data directory to the front, only the json specification is needed.")
+    parser.add_argument("--formatting_template", type=str, default="### Instruction:\n{}\n### Response:\n")
+    parser.add_argument("--model_name_or_path", type=str, default="deepseek-ai/deepseek-llm-7b-base")
+    parser.add_argument("--output_dir", type=str, help="Specifies the path to the directory where everything is happenung..", default="/cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output/")
+    parser.add_argument("--data_dir", type=str, help="Adds a default data directory to the front, only the json specification is needed.",default="/cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/data")
+    parser.add_argument("--target_file_name", type=str, default="predictions_hf.json")
     return parser.parse_args()
 
 
@@ -84,51 +69,50 @@ def get_max_step_adapter_name(output_dir):
     ])
     return os.path.join(output_dir, f"{ckpt_name}{max_step}", "adapter_model")
 
+  
+print("Loading cli arguments")
+cli_args = get_arguments()
 
-args = get_arguments()
 
-adapter_path = os.path.join(args.output_dir, args.run_name)
-print(f"Adapter search path: {adapter_path}")
-adapter_model_name = get_max_step_adapter_name(adapter_path)
-print(f"Loading adapters from: {adapter_model_name}")
+print("Loading generation arguments")
+generation_config = GenerationConfig(**vars(GenerationArguments()))
 
-print(f"Start: Loading model {args.model_name_or_path}")
-model = AutoModelForCausalLM.from_pretrained(
-    args.model_name_or_path,
-    torch_dtype=torch.bfloat16,
-    cache_dir=os.environ["HF_HOME"], 
-    device_map="auto"
-)
-print("Done: Loading model")
+target_path = os.path.join(cli_args.output_dir, cli_args.run_name, GENERATION_CONFIG_FILE_NAME)
+print("Saving generation arguments")
+with open(target_path, "w") as f:
+    json.dump(vars(generation_config), f, indent=4, ensure_ascii=False)
 
-print("Start: Load adapter")
-model = PeftModel.from_pretrained(model, adapter_model_name)
-print("Done: Load adapter")
-
-model.generation_config = GenerationConfig.from_pretrained(args.model_name_or_path)
-model.generation_config.do_sample = False
-model.generation_config.num_beams = 1
-model.generation_config.temperature = None
-model.generation_config.top_p = None
-model.generation_config.pad_token_id = model.generation_config.eos_token_id
-model.generation_config.max_new_tokens = 1024
-print(f"Generation config:\n{model.generation_config}")
-
-print("Start: Load tokenizer")
-tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-print("Done: Load tokenizer")
-
-data_path = os.path.join(args.data_dir, args.data_path)
+data_path = os.path.join(cli_args.data_dir, cli_args.data_path)
 print(f"Load data from {data_path}")
 with open(data_path) as f:
     data = json.load(f)
 questions = format_questions(
-    questions=[element["input"] for element in data],
-    formatting_template=args.formatting_template
+    questions=[element["instruction"] for element in data],
+    formatting_template=cli_args.formatting_template
 )
 
+print("Start: Load tokenizer")
+tokenizer = AutoTokenizer.from_pretrained(cli_args.model_name_or_path)
+
+adapter_path = os.path.join(cli_args.output_dir, cli_args.run_name)
+print(f"Adapter search path: {adapter_path}")
+adapter_model_name = get_max_step_adapter_name(adapter_path)
+print(f"Loading adapters from: {adapter_model_name}")
+
+print(f"Start: Loading model {cli_args.model_name_or_path}")
+model = AutoModelForCausalLM.from_pretrained(
+    cli_args.model_name_or_path,
+    torch_dtype=torch.bfloat16,
+    cache_dir=os.environ["HF_HOME"], 
+    device_map="auto",
+)
+model.generation_config = generation_config
+
+print("Start: Load adapter")
+model = PeftModel.from_pretrained(model, adapter_model_name)
+
 print("Start eval")
-target_path = os.path.join(args.output_dir, args.run_name, args.target_file_name)
+target_path = os.path.join(cli_args.output_dir, cli_args.run_name, cli_args.target_file_name)
 print(f"Writing to target path {target_path}")
 results = []
 for i, data_point in enumerate(tqdm(questions)):
@@ -137,7 +121,7 @@ for i, data_point in enumerate(tqdm(questions)):
     result = tokenizer.decode(outputs[0])
     results.append(
         {
-            "input": data_point,
+            "instruction": data_point,
             "prediction": result
         }
     )
@@ -148,17 +132,8 @@ for i, data_point in enumerate(tqdm(questions)):
 sbatch \
     --gpus=rtx_4090:1 \
     --mem-per-cpu=8G \
-    --wrap=" \
-        cd repos/sft; \
-            python3 inference_hf.py \
-            --data_path decomposed/test/with_result/1/data.json \
-            --run_name deepseek-7b-base-baseline";
-sbatch \
-    --gpus=rtx_3090:1 \
-    --mem-per-cpu=8G \
-    --wrap=" \
-        cd repos/sft; \
-            python3 inference_hf.py \
-            --data_path decomposed/test/with_result/1/data.json \
-            --run_name deepseek-7b-base-baseline";
+    --time=0-12 \
+    --wrap="python3 sft/inference_hf.py \
+            --data_path baseline/test.json \
+            --run_name deepseek-7b-base-baseline-2";
 """
