@@ -394,19 +394,21 @@ sbatch \
 M1
 sbatch \
     --time=0-4 \
-    --gpus=rtx_4090:1 \
+    --gpus=rtx_3090:1 \
     --mem-per-cpu=8G \
     --wrap="python3 sft/run_sft.py \
         --run_name deepseek-7b-base-m1-2 \
         --data_path decomposed/train/with_result/1/data.json";
+Submitted batch job 58094213
 
 M1-instruct
 sbatch \
     --time=0-4 \
-    --gpus=rtx_4090:1 \
+    --gpus=rtx_3090:1 \
     --mem-per-cpu=8G \
     --wrap="python3 sft/run_sft.py \
         --run_name deepseek-7b-base-m1-instruct \
         --formatting_template 'Generate the first step of the reasoning chain.\n### Instruction:\n{}\n### Response:\n'
         --data_path decomposed/train/with_result/1/data.json";
+Submitted batch job 58094270
 """
