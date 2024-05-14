@@ -184,39 +184,3 @@ if __name__ == "__main__":
     failed = create_processed_results(args=args)
     create_final_metrics(args=args, failed=failed)
     print("Done.")
-
-"""
-# Evaluate baseline performance overall
-sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-baseline"
-
-# Evaluate final
-sbatch --wrap="python3 sft/evaluate.py \
-    --run_name deepseek-7b-base-baseline \
-    --postprocessed_name postprocessed_final.json \
-    --metrics_name model_metrics_final.json";
-
-# Evaluate step 1
-sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-baseline --step 1 \
-    --postprocessed_name postprocessed_step_1.json \
-    --metrics_name model_metrics_step_1.json";
-sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-m1 --step 1"
-sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-m1-instruct --step 1"
-
-# M1 eval
-sbatch --wrap="
-        python3 sft/evaluate.py \
-            --run_name deepseek-7b-base-m1 \
-            --step 1 \
-            --postprocessed_name postprocessed.json \
-            --metrics_name model_metrics.json \
-            --verbose True";
-
-# Baseline eval
-sbatch --wrap="
-        python3 sft/evaluate.py \
-            --run_name deepseek-7b-base-baseline \
-            --step 1 \
-            --postprocessed_name postprocessed_step1.json \
-            --metrics_name model_metrics_step1.json \
-            --verbose True";
-"""

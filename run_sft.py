@@ -380,35 +380,3 @@ def train(args, training_args):
 if __name__ == "__main__":
     args, training_args = get_arguments()
     train(args=args, training_args=training_args)
-
-"""
-Baseline
-sbatch \
-    --time=0-4 \
-    --gpus=rtx_3090:1 \
-    --mem-per-cpu=8G \
-    --wrap="python3 sft/run_sft.py \
-        --run_name deepseek-7b-base-baseline-2 \
-        --data_path baseline/train.json";
-
-M1
-sbatch \
-    --time=0-4 \
-    --gpus=rtx_3090:1 \
-    --mem-per-cpu=8G \
-    --wrap="python3 sft/run_sft.py \
-        --run_name deepseek-7b-base-m1-2 \
-        --data_path decomposed/train/with_result/1/data.json";
-Submitted batch job 58133199
-
-M1-instruct
-sbatch \
-    --time=0-4 \
-    --gpus=rtx_3090:1 \
-    --mem-per-cpu=8G \
-    --wrap="python3 sft/run_sft.py \
-        --run_name deepseek-7b-base-m1-instruct \
-        --formatting_template 'Generate the first step of the reasoning chain.\n### Instruction:\n{}\n### Response:\n' \
-        --data_path decomposed/train/with_result/1/data.json";
-Submitted batch job 58133269
-"""

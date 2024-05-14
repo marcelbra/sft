@@ -8,9 +8,15 @@ from vllm import SamplingParams, LLMEngine, EngineArgs
 from vllm.lora.request import LoRARequest
 
 from arguments import get_inference_arguments
-from inference_hf import (
-    get_max_step_adapter_name
-)
+
+def get_max_step_adapter_name(output_dir):
+    ckpt_name = 'checkpoint-'
+    max_step = max([
+        int(file_name.split(ckpt_name)[1])
+        for file_name in os.listdir(output_dir)
+        if file_name.startswith(ckpt_name)
+    ])
+    return os.path.join(output_dir, f"{ckpt_name}{max_step}", "adapter_model")
 
 
 def format_question(question: str, formatting_template: str):
@@ -34,7 +40,7 @@ def get_sampling_params():
     return SamplingParams(
         temperature=0,
         max_tokens=2048,
-        stop=["\n<|EOT|>"]
+        # stop=["\n<|EOT|>"]
     )
 
 
@@ -114,12 +120,3 @@ if __name__ == "__main__":
     data = get_formatted_data(args, sampling_params, lora_request)
     engine = initialize_engine(args)
     process_requests(engine, data)
-
-"""
-sbatch \
-    --gpus=rtx_3090:1 \
-    --mem-per-cpu=16G \
-    --wrap="python3 sft/inference_vllm.py \
-        --data_path baseline/test.json \
-        --run_name deepseek-7b-base-baseline";
-"""
