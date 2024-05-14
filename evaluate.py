@@ -23,27 +23,38 @@ def get_arguments() -> ArgumentParser:
     return parser.parse_args()
 
 def format_number(input_string: str) -> int:
-    return int(input_string \
+    input_string = input_string \
         .replace(',', '') \
-        .replace('.', '') \
         .replace('%', '') \
         .replace('$', '') \
-        .replace('g', '') \
         .replace('美元', '') \
         .replace('4800/1000=', '') \
         .replace('7:00 AM', '7') \
         .replace('100-30=<<100-30=70>>70 more than Jill', '70') \
+        .replace('150kg', '150') \
         .replace('th place', '') \
         .replace('/year', '') \
-        .replace('/week', '') \
         .replace('/month', '') \
+        .replace('/week', '') \
+        .replace('/day', '') \
+        .replace('/hour', '') \
+        .replace('/minute', '') \
         .replace('cm', '') \
+        .replace('ml', '') \
         .replace('m', '') \
-        .split()[0])
+        .replace('kg', '') \
+        .replace('g', '') \
+        .replace('/task', '') \
+        .replace('\"', '') \
+        .replace('/sandwich', '') \
+        .split()[0]
+    if input_string.endswith("."):
+        input_string = input_string[:-1]
+    return float(input_string)
 
 def filter_(by: str, step: int, question: str) -> str:
     return format_number(question.split(by)[step].split("\n")[0])
-
+    
 def create_processed_results(args: Namespace) -> int:
     data_path = os.path.join(args.output_dir, args.run_name, args.predictions_name)
     print(f"Loading data from {data_path}")
@@ -53,14 +64,27 @@ def create_processed_results(args: Namespace) -> int:
     print(f"Starting to process predictions.")
     counter = 0
     fail_counter = 0
+    skip_counter = 0
     formatted_results = []
     for i, sample in enumerate(samples):
 
         if ">>" not in sample["ground_truth"]:
-            print("Skipping test sample because it does not have '>>' in it.")
-            print(f"Sample:\n{sample['ground_truth']}")
+            print("Skipping test sample because no '>>' found.")
+            print(sample)
+            skip_counter += 1
             continue
         counter += 1
+
+        if ">>" not in sample["prediction"]:
+            print("No intermediate step generated from model. Error.")
+            formatted_results.append(
+                {
+                    "ground_truth": "not computed",
+                    "prediction": None,
+                    "is_correct": False
+                }
+            )
+            continue
 
         if args.step:
             filter = partial(filter_, ">>", args.step)
@@ -103,15 +127,15 @@ def create_processed_results(args: Namespace) -> int:
             }
         )
 
-    failed = (round(fail_counter/counter, 4), fail_counter)
-    print(f"Failed: {failed}.")
+    print(f"Failed: {fail_counter}.")
+    print(f"Skipped: {skip_counter}.")
 
     target_path = os.path.join(args.output_dir, args.run_name, args.postprocessed_name)
     print(f"Writing postprocessed result to {target_path}")
     with open(target_path, "w") as f:
         json.dump(formatted_results, f, indent=4, ensure_ascii=False)
     
-    return failed
+    return fail_counter, skip_counter
 
 def create_final_metrics(
     args: Namespace,
@@ -119,13 +143,22 @@ def create_final_metrics(
     write: bool = True
     ):
 
+    data_path = os.path.join(args.output_dir, args.run_name, args.predictions_name)
+    print(f"Loading original data from {data_path}")
+    with open(data_path, "r") as f:
+        samples = json.load(f)
+
     source_path = os.path.join(args.output_dir, args.run_name, args.postprocessed_name)
+    print(f"Loading evaluated data from {source_path}")
     with open(source_path, "r") as f:
         data = json.load(f)
 
     correct = [x["is_correct"] for x in data].count(True)
-    false = len(data) - correct
-    accuracy = correct / len(data)
+    false = [x["is_correct"] for x in data].count(False)
+    total_computed = correct + false
+    accuracy = correct / total_computed
+    adj_accuracy = correct / len(samples) # This conservatively assumes all skipped instances are just wrong
+
     if not write:
         return
 
@@ -134,13 +167,17 @@ def create_final_metrics(
     metrics = {
         "correct": correct,
         "false": false,
+        "total_evaluated": total_computed,
+        "total": len(samples),
         "accuracy": accuracy,
-        "rel_fail": failed[0],
-        "abs_fail": failed[1],
+        "adj_accuracy": adj_accuracy,
+        "failed": failed[0],
+        "skipped": failed[1],
     }
     print(f"Metrics:\n{metrics}")
     with open(target_path, "w") as f:
         json.dump(metrics, f, indent=4, ensure_ascii=False)
+    print(f"Wrote result to {target_path}")
 
 if __name__ == "__main__":
     args = get_arguments()
@@ -152,11 +189,34 @@ if __name__ == "__main__":
 # Evaluate baseline performance overall
 sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-baseline"
 
-# Evaluate baseline step 1
-sbatch --wrap=" \
-    python3 sft/evaluate.py \
-        --run_name deepseek-7b-base-baseline \
-        --step 1 \
-        --postprocessed_name postprocessed_step1.json \
-        --metrics_name model_metrics_step1.json"
+# Evaluate final
+sbatch --wrap="python3 sft/evaluate.py \
+    --run_name deepseek-7b-base-baseline \
+    --postprocessed_name postprocessed_final.json \
+    --metrics_name model_metrics_final.json";
+
+# Evaluate step 1
+sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-baseline --step 1 \
+    --postprocessed_name postprocessed_step_1.json \
+    --metrics_name model_metrics_step_1.json";
+sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-m1 --step 1"
+sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-m1-instruct --step 1"
+
+# M1 eval
+sbatch --wrap="
+        python3 sft/evaluate.py \
+            --run_name deepseek-7b-base-m1 \
+            --step 1 \
+            --postprocessed_name postprocessed.json \
+            --metrics_name model_metrics.json \
+            --verbose True";
+
+# Baseline eval
+sbatch --wrap="
+        python3 sft/evaluate.py \
+            --run_name deepseek-7b-base-baseline \
+            --step 1 \
+            --postprocessed_name postprocessed_step1.json \
+            --metrics_name model_metrics_step1.json \
+            --verbose True";
 """
