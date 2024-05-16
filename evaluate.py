@@ -14,8 +14,11 @@ def get_arguments() -> ArgumentParser:
     """
     parser = ArgumentParser()
     parser.add_argument("--run_name", type=str, help="Specifies the run name. Used to load right folder from output dir.")
+    parser.add_argument("--ground_truth_file", type=str, help="(Source) Specifies the name of the file that has the ground truth.")
+    parser.add_argument("--instruction_key", type=str, help="Specifies the name of the key that has the instruction.", default="instruction")
+    parser.add_argument("--ground_truth_key", type=str, help="Specifies the name of the key that has the ground truth.", default="output")
     parser.add_argument("--verbose", type=bool, help="Specifies whether to print errors verbosely (for debugging).", default=False)
-    parser.add_argument("--output_dir", type=str, help="Specifies the path to the directory where everything is happenung..", default="/cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output/")
+    parser.add_argument("--output_dir", type=str, help="Specifies the path to the directory where everything is happenung..", default="/cluster/work/lawecon/Work/mbraasch/output/")
     parser.add_argument("--predictions_name", type=str, help="(Source) Specifies the name of predictions file in the output directory.", default="predictions.json")
     parser.add_argument("--postprocessed_name", type=str, help="(Target) File name of evaluation (by sample).", default="postprocessed.json")
     parser.add_argument("--metrics_name", type=str, help="(Target) File name of summarized metrics.", default="model_metrics.json")
@@ -56,10 +59,29 @@ def filter_(by: str, step: int, question: str) -> str:
     return format_number(question.split(by)[step].split("\n")[0])
     
 def create_processed_results(args: Namespace) -> int:
+    
     data_path = os.path.join(args.output_dir, args.run_name, args.predictions_name)
     print(f"Loading data from {data_path}")
     with open(data_path, "r") as f:
         samples = json.load(f)
+
+    # If there is a ground_truth_file load it with its key
+    if args.ground_truth_file:
+        print(f"Loading ground truth from {args.ground_truth_file}")
+        with open(args.ground_truth_file, "r") as f:
+            ground_truth = json.load(f)
+
+        # Make mapping from question to answer
+        mapping = {x[args.instruction_key]: x[args.ground_truth_key] for x in ground_truth}
+
+        # Replace ground truth with answer
+        for i, sample in enumerate(samples):
+            current_instruction = sample["instruction"].replace("### Instruction:\n", "").replace("\n### Response:\n", "")
+            if current_instruction in mapping:
+                samples[i]["ground_truth"] = mapping[current_instruction]
+            # else:
+            #     raise ValueError(f"Could not find ground truth for question {i}:\n{current_instruction}")
+            # TODO: for some reason there are 3 questions missing in the ground truth file
 
     print(f"Starting to process predictions.")
     counter = 0
