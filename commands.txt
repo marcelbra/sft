@@ -1,33 +1,40 @@
 ######################### Training #########################
 
-M1-instruct
-sbatch \
-    --time=0-4 \
-    --gpus=rtx_3090:1 \
-    --mem-per-cpu=8G \
-    --wrap="python3 sft/run_sft.py \
-        --run_name deepseek-7b-base-m1-instruct \
-        --data_path decomposed/train/with_result/1/data.json";
-Submitted batch job 58133269
 
 Baseline
 sbatch \
-    --time=0-4 \
+    --gpus=rtx_4090:1 \
+    --mem-per-cpu=8G \
+    --time=0-2 \
+    --wrap="python3 sft/run_sft.py \
+        --model_type bl \
+        --run_name deepseek-7b-base-baseline \
+        --data_path baseline/train.json";
+sbatch \
     --gpus=rtx_3090:1 \
+    --time=0-2 \
     --mem-per-cpu=8G \
     --wrap="python3 sft/run_sft.py \
-        --run_name deepseek-7b-base-baseline-2 \
+        --model_type bl \
+        --run_name deepseek-7b-base-baseline \
         --data_path baseline/train.json";
 
 M1
 sbatch \
-    --time=0-4 \
+    --time=0-2 \
     --gpus=rtx_3090:1 \
     --mem-per-cpu=8G \
     --wrap="python3 sft/run_sft.py \
-        --run_name deepseek-7b-base-m1-2 \
-        --data_path decomposed/train/with_result/1/data.json";
-Submitted batch job 58133199
+        --run_name deepseek-7b-base-m1 \
+        --data_path decomposed/train/normal/1.json";
+
+M2
+sbatch \
+    --gpus=rtx_4090:1 \
+    --mem-per-cpu=8G \
+    --wrap="python3 sft/run_sft.py \
+        --run_name deepseek-7b-base-m2 \
+        --data_path decomposed/train/normal/2.json";
 
 ######################### Inference #########################
 
@@ -36,59 +43,57 @@ sbatch \
     --gpus=rtx_4090:1 \
     --mem-per-cpu=16G \
     --wrap="python3 sft/inference.py \
-        --data_path baseline/test.json \
-        --run_name deepseek-7b-base-m1-instruct";
+        --data_path filtered/test.json \
+        --run_name deepseek-7b-base-baseline";
 
 # M1 inference
+sbatch \
+    --gpus=rtx_3090:1 \
+    --mem-per-cpu=16G \
+    --wrap="python3 sft/inference.py \
+        --data_path decomposed/test/normal/1.json \
+        --run_name deepseek-7b-base-m1";
 sbatch \
     --gpus=rtx_4090:1 \
     --mem-per-cpu=16G \
     --wrap="python3 sft/inference.py \
-        --data_path decomposed/test/with_result/1/data.json \
+        --data_path decomposed/test/normal/1.json \
         --run_name deepseek-7b-base-m1";
-58550495
-        
-# m1-Instruct inference
+59035776
+
+# M2 inference
 sbatch \
-    --gpus=rtx_3090:1 \
+    --gpus=rtx_4090:1 \
     --mem-per-cpu=16G \
-    --time=0-2 \
-    --wrap='python3 sft/inference.py \
-        --data_path decomposed/test/with_result/1/data.json \
-        --run_name deepseek-7b-base-m1';
+    --wrap="python3 sft/inference.py \
+        --data_path decomposed/test/normal/2.json \
+        --run_name deepseek-7b-base-m2";
+59035824
 
 ######################### Evaluate #########################
 
 # Evaluate baseline performance overall
 sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-baseline"
 
-# Evaluate final
+# Evaluate baseline final
 sbatch --wrap="python3 sft/evaluate.py \
     --run_name deepseek-7b-base-baseline \
     --postprocessed_name postprocessed_final.json \
     --metrics_name model_metrics_final.json";
 
-# Evaluate step 1
-sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-baseline --step 1 \
+# Evaluate baseline step 1
+sbatch --wrap="python3 sft/evaluate.py \
+    --run_name deepseek-7b-base-baseline \
+    --step 1 \
     --postprocessed_name postprocessed_step_1.json \
     --metrics_name model_metrics_step_1.json";
+
+# Evaluate baseline step 2
+sbatch --wrap="python3 sft/evaluate.py \
+    --run_name deepseek-7b-base-baseline \
+    --step 3 \
+    --postprocessed_name postprocessed_step_3.json \
+    --metrics_name model_metrics_step_3.json";
+
 sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-m1 --step 1"
-sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-m1-instruct --step 1"
-
-# M1 eval
-sbatch --wrap="
-        python3 sft/evaluate.py \
-            --run_name deepseek-7b-base-m1 \
-            --step 1 \
-            --postprocessed_name postprocessed.json \
-            --metrics_name model_metrics.json \
-            --verbose True";
-
-# Baseline eval
-sbatch --wrap="
-        python3 sft/evaluate.py \
-            --run_name deepseek-7b-base-baseline \
-            --step 1 \
-            --postprocessed_name postprocessed_step1.json \
-            --metrics_name model_metrics_step1.json \
-            --verbose True";
+sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-m2 --step 2"
