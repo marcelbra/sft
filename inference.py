@@ -7,6 +7,7 @@ from tqdm import tqdm
 from vllm import SamplingParams, LLMEngine, EngineArgs
 from vllm.lora.request import LoRARequest
 
+from prompting import build_source_prompt
 from arguments import get_inference_arguments
 
 def get_max_step_adapter_name(output_dir):
@@ -40,7 +41,7 @@ def get_sampling_params():
     return SamplingParams(
         temperature=0,
         max_tokens=2048,
-        # stop=["\n<|EOT|>"]
+        stop=["\n<|EOT|>"]
     )
 
 
@@ -52,7 +53,7 @@ def get_formatted_data(args, sampling_params, lora_request):
     print("Format data.")
     formatted_data = [
         {
-            "instruction": format_question(element["instruction"], args.formatting_template),
+            "instruction": build_source_prompt("", element["question"], args.model_type),
             "ground_truth": element["output"],
             "sampling_params": sampling_params,
             "lora_request": lora_request

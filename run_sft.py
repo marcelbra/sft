@@ -30,6 +30,7 @@ from peft import (
     get_peft_model
 )
 
+from prompting import build_source_prompt, build_target_prompt
 from arguments import get_arguments
 from settings import (
     OUTPUT_DIR,
@@ -42,7 +43,6 @@ logger = logging.getLogger(__name__)
 
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
-EOT_TOKEN = "<|EOT|>"
 
 
 def print_trainable_parameters(args, model):
@@ -241,10 +241,6 @@ def get_accelerate_model(args):
     return model, tokenizer
 
 
-def build_instruction_prompt(formatting_template: str, instruction: str):
-    return formatting_template.format(instruction.strip()).lstrip()
-
-
 def _tokenize_fn(strings: Sequence[str], tokenizer: AutoTokenizer) -> Dict:
     """Tokenize a list of strings."""
     tokenized_list = [
@@ -306,14 +302,12 @@ class DataCollatorForSupervisedDataset(object):
             attention_mask=input_ids.ne(self.tokenizer.pad_token_id),
         )
 
-def train_tokenize_function(formatting_template, examples, tokenizer):
-    sources = [
-        build_instruction_prompt(formatting_template, instruction)
-        for instruction in examples['instruction']
-    ]
-    targets = [f"{output}\n{EOT_TOKEN}" for output in examples['output']]
-    data_dict = preprocess(sources, targets, tokenizer)
-    return data_dict
+
+def train_tokenize_function(formatting_template, model_type, examples, tokenizer):
+    sources = [build_source_prompt(formatting_template, question, model_type) for question in examples['question']]
+    targets = [build_target_prompt(steps, result) for steps, result in zip(examples['steps'], examples['result'])]
+    return preprocess(sources, targets, tokenizer)
+
 
 def train(args, training_args):
 
@@ -336,7 +330,7 @@ def train(args, training_args):
         dataset = dataset.select(range(args.max_train_samples))
 
     train_dataset = dataset.map(
-        partial(train_tokenize_function, args.formatting_template),
+        partial(train_tokenize_function, args.formatting_template, args.model_type),
         batched=True,
         batch_size=3000,
         num_proc=32,
