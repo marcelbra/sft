@@ -14,10 +14,11 @@ def get_inference_arguments() -> Namespace:
     parser = ArgumentParser()
     parser.add_argument("--run_name", type=str)
     parser.add_argument("--data_path", type=str, help="Adds a default data directory to the front, only the json specification is needed.")
+    parser.add_argument("--model_type", type=str, default="bl")
     parser.add_argument("--formatting_template", type=str, default="### Instruction:\n{}\n### Response:\n")
     parser.add_argument("--model_name_or_path", type=str, default="deepseek-ai/deepseek-llm-7b-base")
-    parser.add_argument("--output_dir", type=str, help="Specifies the path to the directory where everything is happenung..", default="/cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/output/")
-    parser.add_argument("--data_dir", type=str, help="Adds a default data directory to the front, only the json specification is needed.",default="/cluster/work/lawecon/Work/mbraasch/projects/moe_decomposition/data")
+    parser.add_argument("--output_dir", type=str, help="Specifies the path to the directory where everything is happening.", default="/cluster/work/lawecon/Work/mbraasch/output/")
+    parser.add_argument("--data_dir", type=str, help="Adds a default data directory to the front, only the json specification is needed.",default="/cluster/work/lawecon/Work/mbraasch/data")
     parser.add_argument("--target_file_name", type=str, default="predictions.json")
     parser.add_argument("--start_from", type=int, default=None)
     parser.add_argument("--amount_samples", type=int, default=None)
@@ -27,10 +28,12 @@ def get_arguments() -> Namespace:
     parser = ArgumentParser()
     parser.add_argument("--model_name_or_path", type=str, default="deepseek-ai/deepseek-llm-7b-base")
     parser.add_argument("--run_name", type=str)
+    parser.add_argument("--model_type", type=str, default="bl")
     parser.add_argument("--data_path", type=str, help="Adds a default data directory to the front, only the specification starting _from_ data directory is needed.")
     parser.add_argument("--formatting_template", type=str, default="### Instruction:\n{}\n### Response:\n")
     parser.add_argument("--max_train_samples", type=int, default=None, help="For debugging. Cuts the amount of training samples.")
     cli_args = parser.parse_args()
+    print(f"Training model type {cli_args.model_type} (bl=baseline, m1=m1, mi=all but m1).")
     # TODO: refactor
     hfparser = transformers.HfArgumentParser((
         ModelArguments, DataArguments, TrainingArguments, GenerationArguments
