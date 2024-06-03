@@ -14,12 +14,9 @@ def get_arguments() -> ArgumentParser:
     """
     parser = ArgumentParser()
     parser.add_argument("--run_name", type=str, help="Specifies the run name. Used to load right folder from output dir.")
-    parser.add_argument("--ground_truth_file", type=str, help="(Source) Specifies the name of the file that has the ground truth.")
-    parser.add_argument("--instruction_key", type=str, help="Specifies the name of the key that has the instruction.", default="instruction")
-    parser.add_argument("--ground_truth_key", type=str, help="Specifies the name of the key that has the ground truth.", default="output")
     parser.add_argument("--verbose", type=bool, help="Specifies whether to print errors verbosely (for debugging).", default=False)
     parser.add_argument("--output_dir", type=str, help="Specifies the path to the directory where everything is happenung..", default="/cluster/work/lawecon/Work/mbraasch/output/")
-    parser.add_argument("--predictions_name", type=str, help="(Source) Specifies the name of predictions file in the output directory.", default="predictions.json")
+    parser.add_argument("--predictions_name", type=str, help="(Source) Specifies the name of predictions file in the output directory.", default="final_results.json")
     parser.add_argument("--postprocessed_name", type=str, help="(Target) File name of evaluation (by sample).", default="postprocessed.json")
     parser.add_argument("--metrics_name", type=str, help="(Target) File name of summarized metrics.", default="model_metrics.json")
     parser.add_argument("--step", type=bool, help="Which step to evaluate.", default=None)
@@ -65,24 +62,6 @@ def create_processed_results(args: Namespace) -> int:
     with open(data_path, "r") as f:
         samples = json.load(f)
 
-    # If there is a ground_truth_file load it with its key
-    if args.ground_truth_file:
-        print(f"Loading ground truth from {args.ground_truth_file}")
-        with open(args.ground_truth_file, "r") as f:
-            ground_truth = json.load(f)
-
-        # Make mapping from question to answer
-        mapping = {x[args.instruction_key]: x[args.ground_truth_key] for x in ground_truth}
-
-        # Replace ground truth with answer
-        for i, sample in enumerate(samples):
-            current_instruction = sample["instruction"].replace("### Instruction:\n", "").replace("\n### Response:\n", "")
-            if current_instruction in mapping:
-                samples[i]["ground_truth"] = mapping[current_instruction]
-            # else:
-            #     raise ValueError(f"Could not find ground truth for question {i}:\n{current_instruction}")
-            # TODO: for some reason there are 3 questions missing in the ground truth file
-
     print(f"Starting to process predictions.")
     counter = 0
     fail_counter = 0
@@ -111,7 +90,7 @@ def create_processed_results(args: Namespace) -> int:
         if args.step:
             filter = partial(filter_, ">>", args.step)
         else:
-            filter = partial(filter_, "#### ", 1)
+            filter = partial(filter_, "\nFinal answer:  ", 1)
 
         failed = False
         ground_truth_value = None
@@ -136,7 +115,7 @@ def create_processed_results(args: Namespace) -> int:
                 print(f"Correct:\n{ground_truth_value == predicted_value}")
                 print(f"Input:\n{sample['instruction']}")
                 print(f"Ground truth:\n{sample['ground_truth']}")
-                print(f"Prediction:\n{sample['prediction']}\n") #.replace("\n<|EOT|>", "")}\n")
+                print(f"Prediction:\n{sample['prediction']}\n")
             continue
 
         print(f"Prediction for data point {i} processed correctly.")
@@ -203,6 +182,16 @@ def create_final_metrics(
 
 if __name__ == "__main__":
     args = get_arguments()
+
+    # args.run_name = ""
+    # args.output_dir = ""
+    # args.predictions_name = "predictions_m1.json"
+    # args.postprocessed_name = "postprocessed_final.json"
+    # args.metrics_name = "model_metrics_final.json"
+    # args.postprocessed_name = "postprocessed_m1_step_1.json"
+    # args.metrics_name = "model_metrics_m1_step_1.json"
+    # args.step = 1
+
     failed = create_processed_results(args=args)
     create_final_metrics(args=args, failed=failed)
     print("Done.")

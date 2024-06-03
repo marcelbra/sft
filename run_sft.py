@@ -10,7 +10,7 @@ from typing import Dict, Sequence
 
 import torch
 import transformers
-import bitsandbytes as bnb
+# import bitsandbytes as bnb
 
 from accelerate import PartialState
 from datasets import load_dataset
@@ -32,12 +32,7 @@ from peft import (
 
 from prompting import build_source_prompt, build_target_prompt
 from arguments import get_arguments
-from settings import (
-    OUTPUT_DIR,
-    DATA_DIR,
-    TRAIN_METRICS_FILE_NAME
-)
-
+from settings import TRAIN_METRICS_FILE_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -73,39 +68,16 @@ def print_trainable_parameters(args, model):
         print(k, v, v / total)
 
 
-def smart_tokenizer_and_embedding_resize(
-        special_tokens_dict: Dict,
-        tokenizer: AutoTokenizer,
-        model: transformers.PreTrainedModel,
-):
-    """Resize tokenizer and embedding.
-
-    Note: This is the unoptimized version that may make your embedding size not be divisible by 64.
-    """
-    num_new_tokens = tokenizer.add_special_tokens(special_tokens_dict)
-    model.resize_token_embeddings(len(tokenizer))
-
-    if num_new_tokens > 0:
-        input_embeddings_data = model.get_input_embeddings().weight.data
-        output_embeddings_data = model.get_output_embeddings().weight.data
-
-        input_embeddings_avg = input_embeddings_data[:-num_new_tokens].mean(dim=0, keepdim=True)
-        output_embeddings_avg = output_embeddings_data[:-num_new_tokens].mean(dim=0, keepdim=True)
-
-        input_embeddings_data[-num_new_tokens:] = input_embeddings_avg
-        output_embeddings_data[-num_new_tokens:] = output_embeddings_avg
-
-
 def find_all_linear_names(args, model):
-    cls = bnb.nn.Linear4bit if args.bits == 4 else (bnb.nn.Linear8bitLt if args.bits == 8 else torch.nn.Linear)
     lora_module_names = set()
     for name, module in model.named_modules():
-        if isinstance(module, cls):
+        if isinstance(module, torch.nn.Linear):
             names = name.split('.')
             lora_module_names.add(names[0] if len(names) == 1 else names[-1])
 
     if 'lm_head' in lora_module_names:  # needed for 16-bit
         lora_module_names.remove('lm_head')
+    
     return list(lora_module_names)
 
 
@@ -113,13 +85,11 @@ class SavePeftModelCallback(transformers.TrainerCallback):
     def save_model(self, args, state, kwargs):
         print('Saving PEFT checkpoint...')
         if state.best_model_checkpoint is not None:
-            checkpoint_folder = os.path.join(state.best_model_checkpoint, "adapter_model")
+            checkpoint_folder = os.path.join(args.run_name, state.best_model_checkpoint, "adapter_model")
         else:
-            checkpoint_folder = os.path.join(OUTPUT_DIR, args.run_name, f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}")
-
+            checkpoint_folder = os.path.join(args.run_name, f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}")
         peft_model_path = os.path.join(checkpoint_folder, "adapter_model")
         kwargs["model"].save_pretrained(peft_model_path)
-
         pytorch_model_path = os.path.join(checkpoint_folder, "pytorch_model.bin")
         if os.path.exists(pytorch_model_path):
             os.remove(pytorch_model_path)
@@ -133,7 +103,7 @@ class SavePeftModelCallback(transformers.TrainerCallback):
             with open(fname, 'a'):
                 os.utime(fname, times)
 
-        touch(os.path.join(OUTPUT_DIR, args.run_name, 'completed'))
+        touch(os.path.join(args.run_name, 'completed'))
         self.save_model(args, state, kwargs)
 
 
@@ -142,37 +112,37 @@ def get_accelerate_model(args):
     if torch.cuda.is_available():
         n_gpus = torch.cuda.device_count()
 
-    device_map = "auto"
-
     # if we are in a distributed setting, we need to set the device map and max memory per device
     if n_gpus > 1:
         device_string = PartialState().process_index
         device_map = {'': device_string}
 
-    print(f'loading base model {args.model_name_or_path}...')
-    compute_dtype = (torch.float16 if args.fp16 else (torch.bfloat16 if args.bf16 else torch.float32))
+    print(f'Loading base model {args.model_name_or_path}...')
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name_or_path,
         cache_dir=os.environ["HF_HOME"],
-        device_map=device_map,
-        quantization_config=BitsAndBytesConfig(
-            load_in_4bit=args.bits == 4,
-            load_in_8bit=args.bits == 8,
-            llm_int8_threshold=6.0,
-            llm_int8_has_fp16_weight=False,
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=args.double_quant,
-            bnb_4bit_quant_type=args.quant_type,
-        ),
-        torch_dtype=(torch.float32 if args.fp16 else (torch.bfloat16 if args.bf16 else torch.float32)),
-        local_files_only=args.local_files_only,
-        trust_remote_code=args.trust_remote_code,
+        device_map="auto",
+        # quantization_config=BitsAndBytesConfig(
+        #     load_in_4bit=args.bits == 4,
+        #     load_in_8bit=args.bits == 8,
+        #     llm_int8_threshold=6.0,
+        #     llm_int8_has_fp16_weight=False,
+        #     bnb_4bit_compute_dtype=torch.bfloat16,
+        #     bnb_4bit_use_double_quant=args.double_quant,
+        #     bnb_4bit_quant_type=args.quant_type,
+        # ),
+        torch_dtype=torch.bfloat16
+        # local_files_only=args.local_files_only,
+        # trust_remote_code=args.trust_remote_code,
     )
-    if compute_dtype == torch.float16 and args.bits == 4:
-        if torch.cuda.is_bf16_supported():
-            print('=' * 80)
-            print('Your GPU supports bfloat16, you can accelerate training with the argument --bf16')
-            print('=' * 80)
+
+    if hasattr(model, "enable_input_require_grads"):
+        model.enable_input_require_grads()
+    else:
+        def make_inputs_require_grad(module, input, output):
+            output.requires_grad_(True)
+        model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
+
 
     setattr(model, 'model_parallel', True)
     setattr(model, 'is_parallelizable', True)
@@ -184,43 +154,21 @@ def get_accelerate_model(args):
         args.model_name_or_path,
         cache_dir=os.environ["HF_HOME"],
         padding_side=args.padding_side,
-        use_fast=False, # Fast giving issues
-        trust_remote_code=args.trust_remote_code,
-        local_files_only=args.local_files_only,
+        use_fast=False,
+        # trust_remote_code=args.trust_remote_code,
+        # local_files_only=args.local_files_only,
     )
     print("PAD Token:", tokenizer.pad_token, tokenizer.pad_token_id)
     print("BOS Token", tokenizer.bos_token, tokenizer.bos_token_id)
     print("EOS Token", tokenizer.eos_token, tokenizer.eos_token_id)
 
-    if tokenizer._pad_token is None:
-        smart_tokenizer_and_embedding_resize(
-            special_tokens_dict=dict(pad_token=DEFAULT_PAD_TOKEN),
-            tokenizer=tokenizer,
-            model=model,
-        )
-    print("model_config", model.config)
-    if 'llama' in args.model_name_or_path or isinstance(tokenizer, LlamaTokenizer):
-        # LLaMA tokenizer may not have correct special tokens set.
-        # Check and add them if missing to prevent them from being parsed into different tokens.
-        # Note that these are present in the vocabulary.
-        # Note also that `model.config.pad_token_id` is 0 which corresponds to `<unk>` token.
-        print('Adding special tokens.')
-        tokenizer.add_special_tokens({
-            "eos_token": tokenizer.convert_ids_to_tokens(model.config.eos_token_id),
-            "bos_token": tokenizer.convert_ids_to_tokens(model.config.bos_token_id),
-            "unk_token": tokenizer.convert_ids_to_tokens(
-                model.config.pad_token_id if model.config.pad_token_id != -1 else tokenizer.pad_token_id
-            ),
-        })
-
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=args.gradient_checkpointing)
-
-    print(f'adding LoRA modules...')
+    print(f'Initalizing LoRA.')
     modules = find_all_linear_names(args, model)
+    print(f'The {len(modules)} modules are: {modules}')
     config = LoraConfig(
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        target_modules=modules,
+        target_modules = modules,
         lora_dropout=args.lora_dropout,
         bias="none",
         task_type="CAUSAL_LM",
@@ -276,7 +224,6 @@ def preprocess(
     examples = [s + t for s, t in zip(sources, targets)]
     examples_tokenized, sources_tokenized = [_tokenize_fn(strings, tokenizer) for strings in (examples, sources)]
     input_ids = examples_tokenized["input_ids"]
-
     labels = deepcopy(input_ids)
     for label, source_len in zip(labels, sources_tokenized["input_ids_lens"]):
         label[:source_len] = IGNORE_INDEX
@@ -290,12 +237,10 @@ class DataCollatorForSupervisedDataset(object):
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         input_ids, labels = tuple([instance[key] for instance in instances] for key in ("input_ids", "labels"))
         input_ids = [torch.tensor(x) for x in input_ids]
-        input_ids = torch.nn.utils.rnn.pad_sequence(
-            input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
-        )
+        input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
         labels = [torch.tensor(x) for x in labels]
         labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
-        
+
         return dict(
             input_ids=input_ids,
             labels=labels,
@@ -303,9 +248,27 @@ class DataCollatorForSupervisedDataset(object):
         )
 
 
-def train_tokenize_function(formatting_template, model_type, examples, tokenizer):
-    sources = [build_source_prompt(formatting_template, question, model_type) for question in examples['question']]
-    targets = [build_target_prompt(steps, result) for steps, result in zip(examples['steps'], examples['result'])]
+def train_tokenize_function(instruction, examples, tokenizer):
+    sources = [
+        build_source_prompt(question, steps, instruction)
+        for question, steps in zip(
+            examples['source_question'],
+            examples['source_steps']
+        )
+    ]
+    targets = [
+        build_target_prompt(steps, result, tokenizer.eos_token)
+        for steps, result in zip(
+            examples['target_steps'],
+            examples['target_result']
+        )
+    ]
+    
+    # Print formatted example for safety check
+    source, target = list(zip(sources, targets))[1]
+    print(f"Source:\n---\n{source}\n---\n")
+    print(f"Target:\n---\n{target}\n---\n")
+    
     return preprocess(sources, targets, tokenizer)
 
 
@@ -319,7 +282,7 @@ def train(args, training_args):
 
     # Data
 
-    dataset_path = os.path.join(DATA_DIR, args.data_path)
+    dataset_path = os.path.join(args.data_path)
     dataset = load_dataset(
         'json',
         data_files=dataset_path,
@@ -330,12 +293,12 @@ def train(args, training_args):
         dataset = dataset.select(range(args.max_train_samples))
 
     train_dataset = dataset.map(
-        partial(train_tokenize_function, args.formatting_template, args.model_type),
+        partial(train_tokenize_function, args.instruction),
         batched=True,
         batch_size=3000,
         num_proc=32,
         remove_columns=dataset.column_names,
-        load_from_cache_file=True,
+        load_from_cache_file=False,
         desc="Running Encoding",
         fn_kwargs={ "tokenizer": tokenizer }
     )
@@ -367,10 +330,12 @@ def train(args, training_args):
     trainer.save_state()
     all_metrics.update(metrics)
     
-    with open(os.path.join(OUTPUT_DIR, args.run_name, TRAIN_METRICS_FILE_NAME), "w") as f:
+    with open(os.path.join(args.run_name, TRAIN_METRICS_FILE_NAME), "w") as f:
         f.write(json.dumps(all_metrics))
 
-
-if __name__ == "__main__":
+def main():
     args, training_args = get_arguments()
     train(args=args, training_args=training_args)
+
+if __name__ == "__main__":
+    main()

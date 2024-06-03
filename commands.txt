@@ -1,30 +1,30 @@
+######################### Training pipeline #################
+
+sbatch --gpus=rtx_4090:1 --mem-per-cpu=8G --wrap="python3 sft/training_pipeline.py"
+sbatch --gpus=rtx_4090:1 --mem-per-cpu=8G --wrap="python3 sft/inference_chain.py"
+sbatch --gpus=rtx_4090:1 --mem-per-cpu=8G --wrap="python3 sft/inspect_model.py"
+
+
+sbatch --wrap="python3 sft/evaluate.py --run_name gemma-2b-it;
+
 ######################### Training #########################
 
-
+    --time=0-2 \
 Baseline
 sbatch \
-    --gpus=rtx_4090:1 \
-    --mem-per-cpu=8G \
-    --time=0-2 \
-    --wrap="python3 sft/run_sft.py \
-        --model_type bl \
-        --run_name deepseek-7b-base-baseline \
-        --data_path baseline/train.json";
-sbatch \
     --gpus=rtx_3090:1 \
-    --time=0-2 \
     --mem-per-cpu=8G \
     --wrap="python3 sft/run_sft.py \
-        --model_type bl \
-        --run_name deepseek-7b-base-baseline \
-        --data_path baseline/train.json";
+        --run_name /cluster/work/lawecon/Work/mbraasch/output/gemma-2b-it \
+        --instruction \"Solve the given math problem step by step and put your final answer after 'Final answer: '.\" \
+        --data_path /cluster/work/lawecon/Work/mbraasch/output/gemma-2b-it/data/train.json;"
 
 M1
 sbatch \
-    --time=0-2 \
     --gpus=rtx_3090:1 \
     --mem-per-cpu=8G \
     --wrap="python3 sft/run_sft.py \
+        --model_type m1 \
         --run_name deepseek-7b-base-m1 \
         --data_path decomposed/train/normal/1.json";
 
@@ -33,6 +33,7 @@ sbatch \
     --gpus=rtx_4090:1 \
     --mem-per-cpu=8G \
     --wrap="python3 sft/run_sft.py \
+        --model_type mi \
         --run_name deepseek-7b-base-m2 \
         --data_path decomposed/train/normal/2.json";
 
@@ -43,7 +44,15 @@ sbatch \
     --gpus=rtx_4090:1 \
     --mem-per-cpu=16G \
     --wrap="python3 sft/inference.py \
-        --data_path filtered/test.json \
+        --data_path baseline/test.json \
+        --model_type bl \
+        --run_name deepseek-7b-base-baseline";
+sbatch \
+    --gpus=rtx_3090:1 \
+    --mem-per-cpu=16G \
+    --wrap="python3 sft/inference.py \
+        --data_path baseline/test.json \
+        --model_type bl \
         --run_name deepseek-7b-base-baseline";
 
 # M1 inference
@@ -52,23 +61,35 @@ sbatch \
     --mem-per-cpu=16G \
     --wrap="python3 sft/inference.py \
         --data_path decomposed/test/normal/1.json \
+        --model_type m1 \
         --run_name deepseek-7b-base-m1";
 sbatch \
     --gpus=rtx_4090:1 \
     --mem-per-cpu=16G \
     --wrap="python3 sft/inference.py \
         --data_path decomposed/test/normal/1.json \
+        --model_type m1 \
         --run_name deepseek-7b-base-m1";
-59035776
+59159401
+59159403
 
 # M2 inference
+sbatch \
+    --gpus=rtx_3090:1 \
+    --mem-per-cpu=16G \
+    --wrap="python3 sft/inference.py \
+        --data_path decomposed/test/normal/2.json \
+        --model_type mi \
+        --run_name deepseek-7b-base-m2";
 sbatch \
     --gpus=rtx_4090:1 \
     --mem-per-cpu=16G \
     --wrap="python3 sft/inference.py \
         --data_path decomposed/test/normal/2.json \
+        --model_type mi \
         --run_name deepseek-7b-base-m2";
-59035824
+59159491
+59159493
 
 ######################### Evaluate #########################
 
@@ -76,10 +97,7 @@ sbatch \
 sbatch --wrap="python3 sft/evaluate.py --run_name deepseek-7b-base-baseline"
 
 # Evaluate baseline final
-sbatch --wrap="python3 sft/evaluate.py \
-    --run_name deepseek-7b-base-baseline \
-    --postprocessed_name postprocessed_final.json \
-    --metrics_name model_metrics_final.json";
+sbatch --wrap="python3 sft/evaluate.py --run_name gemma-2b-it;
 
 # Evaluate baseline step 1
 sbatch --wrap="python3 sft/evaluate.py \
