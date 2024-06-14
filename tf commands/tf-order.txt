@@ -1,0 +1,15 @@
+
+1.
+Adapter model creation with `add_adapter_model.ipynb`
+
+2.
+For every model in the target folder do inference on the previous next step predictions
+Careful: make sure the previous next step predictions are done on training data!
+See file `2. inference_command_previous_next_step_predictions.txt`
+
+Once the final step is reached, predictions are done for all steps on test data.
+
+3. Between steps create new teacher forcing data by using `tf.ipynb`
+For that, use the function `create_tf_data_from_corresponding_model` and set the corresponding parameters.
+
+4. Then, train the model with the new teacher forcing data

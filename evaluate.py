@@ -1,26 +1,9 @@
 import os
 import json
 
-from typing import Tuple
-from argparse import ArgumentParser, Namespace
-from functools import partial
+from utils import nested_dict
 
-def get_arguments() -> ArgumentParser:
-    """
-    Adds all the arguments to the parser.
-
-    :param parser: The parser to add the arguments to.
-    :return: The parser with the added arguments.
-    """
-    parser = ArgumentParser()
-    parser.add_argument("--run_name", type=str, help="Specifies the run name. Used to load right folder from output dir.")
-    parser.add_argument("--verbose", type=bool, help="Specifies whether to print errors verbosely (for debugging).", default=False)
-    parser.add_argument("--output_dir", type=str, help="Specifies the path to the directory where everything is happenung..", default="/cluster/work/lawecon/Work/mbraasch/output/")
-    parser.add_argument("--predictions_name", type=str, help="(Source) Specifies the name of predictions file in the output directory.", default="final_results.json")
-    parser.add_argument("--postprocessed_name", type=str, help="(Target) File name of evaluation (by sample).", default="postprocessed.json")
-    parser.add_argument("--metrics_name", type=str, help="(Target) File name of summarized metrics.", default="model_metrics.json")
-    parser.add_argument("--step", type=bool, help="Which step to evaluate.", default=None)
-    return parser.parse_args()
+from collections import defaultdict
 
 def format_number(input_string: str) -> int:
     input_string = input_string \
@@ -54,144 +37,101 @@ def format_number(input_string: str) -> int:
 
 def filter_(by: str, step: int, question: str) -> str:
     return format_number(question.split(by)[step].split("\n")[0])
+
+def evaluate(final_results, eval_folder_path):
+
+    comparison = defaultdict(lambda: defaultdict(list))
     
-def create_processed_results(args: Namespace) -> int:
+    # Get the predictions
+    for final_result in final_results:
+        with open(final_result, "r") as f:
+            data = json.load(f)
+        for element in data:
+            question = element["instruction"].split("\n\n### Input:\n")[1].split("\n\n### Response:\n")[0]
+            prediction = element["result"]
+            comparison[question]["prediction"] = prediction
+                
+    # Get the ground truth
+    ground_truth_path = "/cluster/work/lawecon/Work/mbraasch/data/gsm8k_test.json"
+    with open(ground_truth_path, "r") as f:
+        ground_truth = json.load(f)
     
-    data_path = os.path.join(args.output_dir, args.run_name, args.predictions_name)
-    print(f"Loading data from {data_path}")
-    with open(data_path, "r") as f:
-        samples = json.load(f)
-
-    print(f"Starting to process predictions.")
-    counter = 0
-    fail_counter = 0
-    skip_counter = 0
-    formatted_results = []
-    for i, sample in enumerate(samples):
-
-        if ">>" not in sample["ground_truth"]:
-            print("Skipping test sample because no '>>' found.")
-            print(sample)
-            skip_counter += 1
-            continue
-        counter += 1
-
-        if ">>" not in sample["prediction"]:
-            print("No intermediate step generated from model. Error.")
-            formatted_results.append(
-                {
-                    "ground_truth": "not computed",
-                    "prediction": None,
-                    "is_correct": False
-                }
-            )
-            continue
-
-        if args.step:
-            filter = partial(filter_, ">>", args.step)
-        else:
-            filter = partial(filter_, "\nFinal answer:  ", 1)
-
-        failed = False
-        ground_truth_value = None
-        try:
-            ground_truth_value = filter(sample["ground_truth"])
-        except:
-            failed = True
-        
-        predicted_value = None
-        try:
-            predicted_value = filter(sample["prediction"])
-        except:
-            failed = True
-
-        if failed:
-            print(f"Prediction for data point {i} failed.")
-            fail_counter += 1
-            if args.verbose:
-                print(filter)
-                print(f"Ground truth:\n{ground_truth_value}")
-                print(f"Predicted:\n{predicted_value}")
-                print(f"Correct:\n{ground_truth_value == predicted_value}")
-                print(f"Input:\n{sample['instruction']}")
-                print(f"Ground truth:\n{sample['ground_truth']}")
-                print(f"Prediction:\n{sample['prediction']}\n")
-            continue
-
-        print(f"Prediction for data point {i} processed correctly.")
-
-        formatted_results.append(
+    for element in ground_truth:
+        question = element["source_question"]
+        ground_truth = element["target_result"].replace(",", "")
+        comparison[question]["ground_truth"] = ground_truth
+    
+    # Write the comparison to a file
+    with open(os.path.join(eval_folder_path, f"comparison.json"), "w") as f:
+        json.dump(comparison, f, indent=4, ensure_ascii=False)
+    
+    # Now calculate the accuracy
+    correct = 0
+    total = 0
+    for question, data in comparison.items():
+        total += 1
+        if data["prediction"] == data["ground_truth"]:
+            correct += 1
+    
+    accuracy = correct / total
+    
+    # Write the accuracy to a file
+    with open(os.path.join(eval_folder_path, f"accuracy.json"), "w") as f:
+        json.dump(
             {
-                "ground_truth": ground_truth_value,
-                "prediction": predicted_value,
-                "is_correct": ground_truth_value == predicted_value
+                "accuracy": accuracy,
+                "correct": correct,
+                "false": total - correct,
+                "n": total,
             }
-        )
-
-    print(f"Failed: {fail_counter}.")
-    print(f"Skipped: {skip_counter}.")
-
-    target_path = os.path.join(args.output_dir, args.run_name, args.postprocessed_name)
-    print(f"Writing postprocessed result to {target_path}")
-    with open(target_path, "w") as f:
-        json.dump(formatted_results, f, indent=4, ensure_ascii=False)
+            , f, indent=4, ensure_ascii=False)
     
-    return fail_counter, skip_counter
+    print(f"Accuracy: {round(accuracy * 100, 4)}%")
 
-def create_final_metrics(
-    args: Namespace,
-    failed: Tuple,
-    write: bool = True
+
+def calc_metrics(
+    test_data_path = "/cluster/work/lawecon/Work/mbraasch/output/gemma-2b-it/data/test.json",
+    output_dir ="/cluster/work/lawecon/Work/mbraasch/output/gemma-2b-it"
     ):
+    results = nested_dict(n=2, type_=dict)
+    with open(test_data_path, "r") as f:
+        ground_truth = json.load(f)
+    for element in ground_truth:
+        question = element["source_question"]
+        results[question]["ground_truth"] = element["target_result"]
 
-    data_path = os.path.join(args.output_dir, args.run_name, args.predictions_name)
-    print(f"Loading original data from {data_path}")
-    with open(data_path, "r") as f:
-        samples = json.load(f)
+    # Get prediction
+    predicted_result_path = os.path.join(output_dir, "final_results.json")
+    with open(predicted_result_path, "r") as f:
+        predicted_result = json.load(f)
 
-    source_path = os.path.join(args.output_dir, args.run_name, args.postprocessed_name)
-    print(f"Loading evaluated data from {source_path}")
-    with open(source_path, "r") as f:
-        data = json.load(f)
+    for element in predicted_result:
+        question = element["instruction"].split("\n\n### Input:\n")[1].split("\n\n### Response:\n")[0]
+        results[question]["predicted"] = element["result"]
 
-    correct = [x["is_correct"] for x in data].count(True)
-    false = [x["is_correct"] for x in data].count(False)
-    total_computed = correct + false
-    accuracy = correct / total_computed
-    adj_accuracy = correct / len(samples) # This conservatively assumes all skipped instances are just wrong
+    # For those where there is no prediction, add "None" as a prediction to the results dict
+    for question in results:
+        if "predicted" not in results[question]:
+            results[question]["predicted"] = "None"
 
-    if not write:
-        return
+    # Calculate error
+    for question in results:
+        results[question]["correct"] = results[question]["predicted"] == results[question]["ground_truth"]
 
-    target_path = os.path.join(args.output_dir, args.run_name, args.metrics_name)
-    print(f"Writing metrics to {target_path}.")
+    # Write results to file
+    results_path = os.path.join(output_dir, "final_comparison.json")
+    with open(results_path, "w") as f:
+        json.dump(results, f, indent=4, ensure_ascii=False)
+
+    # Write metrics to file
     metrics = {
-        "correct": correct,
-        "false": false,
-        "total_evaluated": total_computed,
-        "total": len(samples),
-        "accuracy": accuracy,
-        "adj_accuracy": adj_accuracy,
-        "failed": failed[0],
-        "skipped": failed[1],
+        "n": len(results),
+        "correct": sum([results[question]["correct"] for question in results]),
+        "incorrect": len(results) - sum([results[question]["correct"] for question in results]),
+        "accuracy": sum([results[question]["correct"] for question in results]) / len(results)
     }
-    print(f"Metrics:\n{metrics}")
-    with open(target_path, "w") as f:
+
+    metrics_path = os.path.join(output_dir, "final_metrics.json")
+    with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=4, ensure_ascii=False)
-    print(f"Wrote result to {target_path}")
-
-if __name__ == "__main__":
-    args = get_arguments()
-
-    # args.run_name = ""
-    # args.output_dir = ""
-    # args.predictions_name = "predictions_m1.json"
-    # args.postprocessed_name = "postprocessed_final.json"
-    # args.metrics_name = "model_metrics_final.json"
-    # args.postprocessed_name = "postprocessed_m1_step_1.json"
-    # args.metrics_name = "model_metrics_m1_step_1.json"
-    # args.step = 1
-
-    failed = create_processed_results(args=args)
-    create_final_metrics(args=args, failed=failed)
     print("Done.")
