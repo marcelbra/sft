@@ -4,6 +4,7 @@ import json
 from utils import nested_dict
 
 from collections import defaultdict
+from argparse import ArgumentParser
 
 def format_number(input_string: str) -> int:
     input_string = input_string \
@@ -38,7 +39,7 @@ def format_number(input_string: str) -> int:
 def filter_(by: str, step: int, question: str) -> str:
     return format_number(question.split(by)[step].split("\n")[0])
 
-def evaluate(final_results, eval_folder_path):
+def evaluate(final_results, eval_folder_path, ground_truth_path, postfix):
 
     comparison = defaultdict(lambda: defaultdict(list))
     
@@ -52,7 +53,6 @@ def evaluate(final_results, eval_folder_path):
             comparison[question]["prediction"] = prediction
                 
     # Get the ground truth
-    ground_truth_path = "/cluster/work/lawecon/Work/mbraasch/data/gsm8k_test.json"
     with open(ground_truth_path, "r") as f:
         ground_truth = json.load(f)
     
@@ -62,7 +62,7 @@ def evaluate(final_results, eval_folder_path):
         comparison[question]["ground_truth"] = ground_truth
     
     # Write the comparison to a file
-    with open(os.path.join(eval_folder_path, f"comparison.json"), "w") as f:
+    with open(os.path.join(eval_folder_path, f"comparison{postfix}.json"), "w") as f:
         json.dump(comparison, f, indent=4, ensure_ascii=False)
     
     # Now calculate the accuracy
@@ -76,7 +76,7 @@ def evaluate(final_results, eval_folder_path):
     accuracy = correct / total
     
     # Write the accuracy to a file
-    with open(os.path.join(eval_folder_path, f"accuracy.json"), "w") as f:
+    with open(os.path.join(eval_folder_path, f"accuracy{postfix}.json"), "w") as f:
         json.dump(
             {
                 "accuracy": accuracy,
@@ -135,3 +135,35 @@ def calc_metrics(
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=4, ensure_ascii=False)
     print("Done.")
+
+if __name__ == "__main__":
+
+    argparser = ArgumentParser()
+    argparser.add_argument("--eval_folder_path", type=str, required=True)
+    argparser.add_argument("--ground_truth_path", type=str, required=True)
+    argparser.add_argument("--final_result", type=str, required=True)
+    argparser.add_argument("--postfix", type=str, required=True)
+    args = argparser.parse_args()
+
+    evaluate([args.final_result], args.eval_folder_path, args.ground_truth_path, args.postfix)
+
+    """
+    Example:
+    sbatch --time=00:01:00 --wrap="python3 sft/evaluate.py \
+    --eval_folder_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/2_steps \
+    --final_result     /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/2_steps/final_results_test_2_steps.json \
+    --ground_truth_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_2_steps.json \
+    --postfix _2_steps"
+
+    sbatch --time=00:01:00 --wrap="python3 sft/evaluate.py \
+    --eval_folder_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/23_steps \
+    --final_result     /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/23_steps/final_results_test_2_steps.json \
+    --ground_truth_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_2_steps.json \
+    --postfix _2_steps"
+
+    sbatch --time=00:01:00 --wrap="python3 sft/evaluate.py \
+    --eval_folder_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/23_steps \
+    --final_result     /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/23_steps/final_results_test_3_steps.json \
+    --ground_truth_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_3_steps.json \
+    --postfix _3_steps"
+    """

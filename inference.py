@@ -8,19 +8,8 @@ from tqdm import tqdm
 from vllm import SamplingParams, LLMEngine, EngineArgs
 from vllm.lora.request import LoRARequest
 
-from utils import OUTPUT_DIR
-from sft.evaluate import calc_metrics
+from evaluate import calc_metrics
 from prompting import build_source_prompt
-from sft.inference import (
-    get_sampling_params,
-    get_lora_request,
-    format_data,
-    initialize_engine,
-    process_requests,
-    filter_out_results,
-    write_results
-)
-
 
 def get_inference_arguments() -> Namespace:
     parser = ArgumentParser()
@@ -50,14 +39,17 @@ def format_question(question: str, formatting_template: str):
     return formatting_template.format(question.strip()).lstrip()
 
 
-def initialize_engine(args) -> LLMEngine:
+def initialize_engine(model_name_or_path) -> LLMEngine:
     print("Initialize the LLMEngine.")
     engine_args = EngineArgs(
-        model=args.model_name_or_path,
+        model=model_name_or_path,
         enable_lora=True,
         max_loras=1,
         max_lora_rank=64,
-        max_num_seqs=256
+        max_num_seqs=256,
+        trust_remote_code=True,
+        max_num_batched_tokens=64000,
+        max_model_len=22200
     )
     return LLMEngine.from_engine_args(engine_args)
 
@@ -138,49 +130,53 @@ def split_steps(next_steps: List[dict]):
     return {"s1": strategy_one, "s2": strategy_two}
 
 
-def write_results(args, next_steps, final_result, previous_next_steps, postfix):
+def write_results(run_name, next_steps, final_result, previous_next_steps, postfix):
 
+        strategy = ""
         if previous_next_steps:
-            strategy = "s1" if "s1" in previous_next_steps else "s2"
-            print(f"Strategy: {strategy}")
+            if "s1" in previous_next_steps:
+                strategy = "s1" 
+                print(f"Strategy specified: {strategy}")
+            elif "s2" in previous_next_steps:
+                strategy = "s2"
+                print(f"Strategy specified: {strategy}")
         else:
-            strategy = ""
             print("No strategy specified.")
 
         # First, write the next step predictions
         file_name = f"{strategy}_next_step_predictions{postfix}.json" if strategy else f"next_step_predictions{postfix}.json"
-        next_step_path = os.path.join(args.run_name, file_name)
+        next_step_path = os.path.join(run_name, file_name)
         print(f"Writing {next_step_path}.")
         with open(next_step_path, "w") as f:
             json.dump(next_steps, f, indent=4, ensure_ascii=False)
 
         # Then, write the final results
         file_name = f"{strategy}_final_results{postfix}.json" if strategy else f"final_results{postfix}.json"
-        final_results_path = os.path.join(args.run_name, file_name)
+        final_results_path = os.path.join(run_name, file_name)
         print(f"Writing {final_results_path}.")
         with open(final_results_path, "w") as f:
             json.dump(final_result, f, indent=4, ensure_ascii=False)
 
         # Lastly, split the data and write it
-        split = split_steps(next_steps)
         if strategy:
-            split_next_steps = os.path.join(args.run_name, f"{strategy}_next_step_predictions_{strategy}{postfix}.json")
+            split = split_steps(next_steps)
+            split_next_steps = os.path.join(run_name, f"{strategy}_next_step_predictions_{strategy}{postfix}.json")
             final_split = split["s1"] if "s1" in split_next_steps else split["s2"]
             print(f"Writing {split_next_steps}.")
             with open(split_next_steps, "w") as f:
                 json.dump(final_split, f, indent=4, ensure_ascii=False)
-        else:
-            split_next_steps_s1 = os.path.join(args.run_name, f"s1_next_step_predictions_s1{postfix}.json")
-            print(f"Writing {split_next_steps_s1}.")
-            with open(split_next_steps_s1, "w") as f:
-                json.dump(split["s1"], f, indent=4, ensure_ascii=False)
-            split_next_steps_s2 = os.path.join(args.run_name, f"s2_next_step_predictions_s2{postfix}.json")
-            print(f"Writing {split_next_steps_s2}.")
-            with open(split_next_steps_s2, "w") as f:
-                json.dump(split["s2"], f, indent=4, ensure_ascii=False)
+            # else:
+            # split_next_steps_s1 = os.path.join(run_name, f"s1_next_step_predictions_s1{postfix}.json")
+            # print(f"Writing {split_next_steps_s1}.")
+            # with open(split_next_steps_s1, "w") as f:
+            #     json.dump(split["s1"], f, indent=4, ensure_ascii=False)
+            # split_next_steps_s2 = os.path.join(run_name, f"s2_next_step_predictions_s2{postfix}.json")
+            # print(f"Writing {split_next_steps_s2}.")
+            # with open(split_next_steps_s2, "w") as f:
+            #     json.dump(split["s2"], f, indent=4, ensure_ascii=False)
 
 
-def format_data(data_dir, sampling_params, instruction, lora_request, previous_next_steps=None, eos="\n", amount_samples=None):
+def format_data(data_dir, sampling_params, lora_request, previous_next_steps=None, amount_samples=None):
             
     if previous_next_steps:
 
@@ -197,9 +193,7 @@ def format_data(data_dir, sampling_params, instruction, lora_request, previous_n
                 {
                     "instruction": build_source_prompt(
                         question=question,
-                        steps=steps + maybe_linebreak + element["prediction"],
-                        instruction=instruction,
-                        eos=eos
+                        steps=steps + maybe_linebreak + element["prediction"]
                     ),
                     "sampling_params": sampling_params,
                     "lora_request": lora_request
@@ -217,9 +211,7 @@ def format_data(data_dir, sampling_params, instruction, lora_request, previous_n
             {
                 "instruction": build_source_prompt(
                     question=element["source_question"],
-                    steps=element["source_steps"],
-                    instruction=instruction,
-                    eos=eos
+                    steps=element["source_steps"]
                 ),
                 "sampling_params": sampling_params,
                 "lora_request": lora_request
@@ -290,57 +282,87 @@ def process_requests(engine: LLMEngine, data: List):
 
 
 def run_inference(
-    experiment: str,
     run_name: str,
-    instruction: str = "Solve the following math word problem step-by-step.",
+    model_name_or_path: str,
     data_dir = "/cluster/work/lawecon/Work/mbraasch/data/gsm8k_test.json",
     previous_next_steps: str = None,
     last_step: bool = False,
-    postfix: str = ""
+    postfix: str = "",
+    eos_token: str = "<eos>"
 ):  
     if previous_next_steps:
         print(f"Previous next steps given: {previous_next_steps}")
     else:
         print("No previous next steps given.")
         
-    sampling_params = get_sampling_params(eot_token="<eos>")
-    args = get_inference_arguments()
-    args.run_name = os.path.join(OUTPUT_DIR, experiment, run_name)
-    lora_request = get_lora_request(lora_path=args.run_name)
+    sampling_params = get_sampling_params(eot_token=eos_token)
+    lora_request = get_lora_request(lora_path=run_name)
     data = format_data(
         data_dir=data_dir,
         sampling_params=sampling_params,
-        instruction=instruction,
         lora_request=lora_request,
         previous_next_steps=previous_next_steps
     )
-    engine = initialize_engine(args)
+    engine = initialize_engine(model_name_or_path)
     results = process_requests(engine, data)
     next_steps, done = filter_out_results(results)
-    write_results(args, next_steps, done, previous_next_steps, postfix)
+    write_results(run_name, next_steps, done, previous_next_steps, postfix)
     if last_step:
         calc_metrics(
             test_data_path=data_dir,
-            output_dir=args.run_name
+            output_dir=run_name
         )
 
 if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("--run_name", type=str, required=True)
+    parser.add_argument("--model_name_or_path", type=str, required=True)
     parser.add_argument("--previous_next_steps", type=str, default=None)
     parser.add_argument("--postfix", type=str, default="")
+    parser.add_argument("--eos_token", type=str, default="<eos>")
+    parser.add_argument("--data_dir", type=str, default="/cluster/work/lawecon/Work/mbraasch/data")
     args = parser.parse_args()
 
     run_inference(
-        experiment="gemma-2b-it",
         run_name=args.run_name,
-        instruction="Solve the following math word problem step-by-step.",
+        model_name_or_path=args.model_name_or_path,
         previous_next_steps=args.previous_next_steps,
-        postfix=args.postfix
+        postfix=args.postfix,
+        eos_token="<|endoftext|>",
+        data_dir=args.data_dir
     )
 """
-sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:05:00 --wrap="python3 sft/inference.py \
-    --run_name gsm8k-gt/3s-overlap-split-tf/m345/m345-tf-0.05-replaced \
-    --previous_next_steps /cluster/work/lawecon/Work/mbraasch/output/gemma-2b-it/gsm8k-dl/3s-overlap-split-tf/m234/m234-tf-0.05-replaced/s1_next_step_predictions_s1.json"
+sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
+    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/3 \
+    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
+    --postfix _test_2_steps \
+    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_2_steps.json"
+sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
+    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/3 \
+    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
+    --postfix _test_3_steps \
+    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_3_steps.json"
+
+sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
+    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/34 \
+    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
+    --postfix _test_2_steps \
+    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_2_steps.json"
+sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
+    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/34 \
+    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
+    --postfix _test_3_steps \
+    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_3_steps.json"
+
+sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
+    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/baseline \
+    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
+    --postfix _test_2_steps \
+    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_2_steps.json"
+sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
+    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/baseline \
+    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
+    --postfix _test_3_steps \
+    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_3_steps.json"
 """

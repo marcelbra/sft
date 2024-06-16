@@ -4,7 +4,7 @@ SOURCE_TEMPLATE = \
 """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 
 ### Instruction:
-<instruction>
+Solve the following math word problem step-by-step.
 
 ### Input:
 <question>
@@ -12,9 +12,8 @@ SOURCE_TEMPLATE = \
 ### Response:
 <source_steps>"""
 
-def build_source_prompt(question: str, steps: str, instruction: str, eos: str):
+def build_source_prompt(question: str, steps: str):
     prompt = SOURCE_TEMPLATE \
-        .replace("<instruction>", instruction).lstrip() \
         .replace("<question>", question.strip()).lstrip() \
         .replace("<source_steps>", steps.strip()).lstrip()
     if prompt.endswith("\n\n"):

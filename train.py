@@ -3,7 +3,6 @@ import json
 import torch
 
 from copy import deepcopy
-from functools import partial
 from dataclasses import dataclass
 from typing import Dict, Sequence
 from argparse import ArgumentParser
@@ -18,15 +17,40 @@ from transformers import (
 )
 
 from prompting import build_source_prompt, build_target_prompt
-from sft.utils import OUTPUT_DIR, SEED, IGNORE_INDEX
+from utils import OUTPUT_DIR, SEED, IGNORE_INDEX
 
+
+def load_model_and_tokenizer_unsloth(model_name_or_path):
+    from unsloth import FastLanguageModel
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name = model_name_or_path,
+        dtype = torch.bfloat16,
+        load_in_4bit = False
+    )
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r = 16, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",],
+        lora_alpha = 32,
+        lora_dropout = 0, # Supports any, but = 0 is optimized
+        bias = "none",    # Supports any, but = "none" is optimized
+        # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
+        use_gradient_checkpointing = "unsloth", # True or "unsloth" for very long context
+        random_state = 3407,
+        use_rslora = False,  # We support rank stabilized LoRA
+        loftq_config = None, # And LoftQ
+    )
+
+    return model, tokenizer
 
 def load_model_and_tokenizer(model_name_or_path):
     model = AutoModelForCausalLM.from_pretrained(
         model_name_or_path,
         cache_dir=os.environ["HF_HOME"],
         device_map="auto",
-        torch_dtype=torch.bfloat16
+        torch_dtype=torch.bfloat16,
+        trust_remote_code=True,
+        local_files_only=False
     )
 
     lora_config = LoraConfig(
@@ -56,8 +80,8 @@ def load_model_and_tokenizer(model_name_or_path):
         cache_dir=os.environ["HF_HOME"],
         padding_side="right",
         use_fast=False,
-        # trust_remote_code=args.trust_remote_code,
-        # local_files_only=args.local_files_only,
+        trust_remote_code=True,
+        local_files_only=False
     )
     print("PAD Token:", tokenizer.pad_token, tokenizer.pad_token_id)
     print("BOS Token", tokenizer.bos_token, tokenizer.bos_token_id)
@@ -124,9 +148,9 @@ class DataCollatorForSupervisedDataset(object):
         )
 
 
-def train_tokenize_function(instruction, examples, tokenizer):
+def train_tokenize_function(examples, tokenizer):
     sources = [
-        build_source_prompt(question, steps, instruction, eos)
+        build_source_prompt(question, steps)
         for question, steps in zip(
             examples['source_question'],
             examples['source_steps']
@@ -147,11 +171,11 @@ def train_tokenize_function(instruction, examples, tokenizer):
     
     return preprocess(sources, targets, tokenizer)
 
-def load_data(config, max_train_samples=None):
+def load_data(data_path, tokenizer, max_train_samples=None):
 
     dataset = load_dataset(
         'json',
-        data_files=config["data_path"],
+        data_files=data_path,
         split="train",
     )
 
@@ -159,7 +183,7 @@ def load_data(config, max_train_samples=None):
         dataset = dataset.select(range(max_train_samples))
 
     return dataset.map(
-        partial(train_tokenize_function, config["instruction"]),
+        train_tokenize_function,
         batched=True,
         batch_size=3000,
         num_proc=32,
@@ -187,7 +211,7 @@ def setup_trainer(model, tokenizer, train_dataset, data_collator, output_dir):
         per_device_train_batch_size = 1,
         gradient_accumulation_steps = 8,
         warmup_steps = 5,
-        num_train_epochs = 2,
+        num_train_epochs = 1,
         learning_rate = 2e-4,
         fp16 = not torch.cuda.is_bf16_supported(),
         bf16 = torch.cuda.is_bf16_supported(),
@@ -208,25 +232,11 @@ def setup_trainer(model, tokenizer, train_dataset, data_collator, output_dir):
         data_collator=data_collator
     )
 
+def run(config):
 
-
-if __name__ == "__main__":
-    
-    parser = ArgumentParser()
-    parser.add_argument("--data_path", type=str, required=True)
-    parser.add_argument("--run_name", type=str, required=True)
-    args = parser.parse_args()
-
-    config = {
-        "data_path": args.data_path,
-        "run_name": args.run_name,
-        "instruction": "Solve the following math word problem step-by-step.",
-        "experiment_name": "gemma-2b-it",
-        "model_name_or_path": "google/gemma-2b-it",
-    }
     print("Config:")
     print(*list(config.items()), sep="\n", end="\n\n")
-    output_path = os.path.join(OUTPUT_DIR, config["experiment_name"], config["run_name"])
+    output_path = os.path.join(OUTPUT_DIR, config["run_name"])
     print("Output Path: ", output_path)
     if not os.path.exists(output_path):
         os.makedirs(output_path)
@@ -234,14 +244,32 @@ if __name__ == "__main__":
         json.dump(config, f, ensure_ascii=False, indent=4)
 
     print("Loading model and tokenizer")
-    model, tokenizer = load_model_and_tokenizer(config["model_name_or_path"])
+    if "unsloth" in config["model_name_or_path"]:
+        model, tokenizer = load_model_and_tokenizer_unsloth(config["model_name_or_path"])
+    else:
+        model, tokenizer = load_model_and_tokenizer(config["model_name_or_path"])
 
     print("Loading data")
-    train_dataset = load_data(config, max_train_samples=None)
-    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+    train_dataset = load_data(config["data_path"], tokenizer, max_train_samples=None)
+    data_collator = DataCollatorForSupervisedDataset(tokenizer)
     
     print("Setting up training")
     trainer = setup_trainer(model, tokenizer, train_dataset, data_collator, output_path)
     
     print("Start training")
     trainer.train()
+
+if __name__ == "__main__":
+    
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, required=True)
+    parser.add_argument("--run_name", type=str, required=True)
+    parser.add_argument("--model_name_or_path", type=str, default=None)
+    args = parser.parse_args()
+    
+    config = {
+        "data_path": args.data_path,
+        "run_name": args.run_name,
+        "model_name_or_path": args.model_name_or_path,
+    }
+    run(config)
