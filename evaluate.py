@@ -6,60 +6,65 @@ from utils import nested_dict
 from collections import defaultdict
 from argparse import ArgumentParser
 
-def format_number(input_string: str) -> int:
-    input_string = input_string \
-        .replace(',', '') \
-        .replace('%', '') \
-        .replace('$', '') \
-        .replace('美元', '') \
-        .replace('4800/1000=', '') \
-        .replace('7:00 AM', '7') \
-        .replace('100-30=<<100-30=70>>70 more than Jill', '70') \
-        .replace('150kg', '150') \
-        .replace('th place', '') \
-        .replace('/year', '') \
-        .replace('/month', '') \
-        .replace('/week', '') \
-        .replace('/day', '') \
-        .replace('/hour', '') \
-        .replace('/minute', '') \
-        .replace('cm', '') \
-        .replace('ml', '') \
-        .replace('m', '') \
-        .replace('kg', '') \
-        .replace('g', '') \
-        .replace('/task', '') \
-        .replace('\"', '') \
-        .replace('/sandwich', '') \
-        .split()[0]
-    if input_string.endswith("."):
-        input_string = input_string[:-1]
-    return float(input_string)
+# def format_number(input_string: str) -> int:
+#     input_string = input_string \
+#         .replace(',', '') \
+#         .replace('%', '') \
+#         .replace('$', '') \
+#         .replace('美元', '') \
+#         .replace('4800/1000=', '') \
+#         .replace('7:00 AM', '7') \
+#         .replace('100-30=<<100-30=70>>70 more than Jill', '70') \
+#         .replace('150kg', '150') \
+#         .replace('th place', '') \
+#         .replace('/year', '') \
+#         .replace('/month', '') \
+#         .replace('/week', '') \
+#         .replace('/day', '') \
+#         .replace('/hour', '') \
+#         .replace('/minute', '') \
+#         .replace('cm', '') \
+#         .replace('ml', '') \
+#         .replace('m', '') \
+#         .replace('kg', '') \
+#         .replace('g', '') \
+#         .replace('/task', '') \
+#         .replace('\"', '') \
+#         .replace('/sandwich', '') \
+#         .split()[0]
+#     if input_string.endswith("."):
+#         input_string = input_string[:-1]
+#     return float(input_string)
 
-def filter_(by: str, step: int, question: str) -> str:
-    return format_number(question.split(by)[step].split("\n")[0])
+# def filter_(by: str, step: int, question: str) -> str:
+#     return format_number(question.split(by)[step].split("\n")[0])
 
 def evaluate(final_results, eval_folder_path, ground_truth_path, postfix):
 
     comparison = defaultdict(lambda: defaultdict(list))
     
-    # Get the predictions
+    # Predictions
     for final_result in final_results:
         with open(final_result, "r") as f:
             data = json.load(f)
         for element in data:
             question = element["instruction"].split("\n\n### Input:\n")[1].split("\n\n### Response:\n")[0]
-            prediction = element["result"]
+            if "result" in element:
+                prediction = element["result"]
+            else:
+                split_by_answer = element["prediction"].split("Final answer: ")
+                if len(split_by_answer) > 1:
+                    prediction = split_by_answer[-1]
+                else:
+                    continue
             comparison[question]["prediction"] = prediction
                 
-    # Get the ground truth
+    # Ground truth
     with open(ground_truth_path, "r") as f:
         ground_truth = json.load(f)
-    
     for element in ground_truth:
         question = element["source_question"]
-        ground_truth = element["target_result"].replace(",", "")
-        comparison[question]["ground_truth"] = ground_truth
+        comparison[question]["ground_truth"] = element["target_result"].replace(",", "")
     
     # Write the comparison to a file
     with open(os.path.join(eval_folder_path, f"comparison{postfix}.json"), "w") as f:
@@ -67,9 +72,12 @@ def evaluate(final_results, eval_folder_path, ground_truth_path, postfix):
     
     # Now calculate the accuracy
     correct = 0
-    total = 0
+    predicted = 0
+    total = len(ground_truth)
     for question, data in comparison.items():
-        total += 1
+        if "prediction" not in data or "ground_truth" not in data:
+            continue
+        predicted += 1
         if data["prediction"] == data["ground_truth"]:
             correct += 1
     
@@ -82,11 +90,14 @@ def evaluate(final_results, eval_folder_path, ground_truth_path, postfix):
                 "accuracy": accuracy,
                 "correct": correct,
                 "false": total - correct,
+                "predicted": predicted,
+                "missed": total - predicted,
                 "n": total,
             }
             , f, indent=4, ensure_ascii=False)
     
     print(f"Accuracy: {round(accuracy * 100, 4)}%")
+    print()
 
 
 def calc_metrics(
@@ -96,6 +107,7 @@ def calc_metrics(
     results = nested_dict(n=2, type_=dict)
     with open(test_data_path, "r") as f:
         ground_truth = json.load(f)
+        print(len(ground_truth))
     for element in ground_truth:
         question = element["source_question"]
         results[question]["ground_truth"] = element["target_result"]
@@ -141,29 +153,16 @@ if __name__ == "__main__":
     argparser = ArgumentParser()
     argparser.add_argument("--eval_folder_path", type=str, required=True)
     argparser.add_argument("--ground_truth_path", type=str, required=True)
-    argparser.add_argument("--final_result", type=str, required=True)
-    argparser.add_argument("--postfix", type=str, required=True)
+    argparser.add_argument("--final_result", type=str, required=True, nargs='+')
+    argparser.add_argument("--postfix", type=str, default="")
     args = argparser.parse_args()
+    # print(args.final_result[1])
+    evaluate(args.final_result, args.eval_folder_path, args.ground_truth_path, args.postfix)
 
-    evaluate([args.final_result], args.eval_folder_path, args.ground_truth_path, args.postfix)
-
-    """
-    Example:
-    sbatch --time=00:01:00 --wrap="python3 sft/evaluate.py \
-    --eval_folder_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/2_steps \
-    --final_result     /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/2_steps/final_results_test_2_steps.json \
-    --ground_truth_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_2_steps.json \
-    --postfix _2_steps"
-
-    sbatch --time=00:01:00 --wrap="python3 sft/evaluate.py \
-    --eval_folder_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/23_steps \
-    --final_result     /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/23_steps/final_results_test_2_steps.json \
-    --ground_truth_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_2_steps.json \
-    --postfix _2_steps"
-
-    sbatch --time=00:01:00 --wrap="python3 sft/evaluate.py \
-    --eval_folder_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/23_steps \
-    --final_result     /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4/23_steps/final_results_test_3_steps.json \
-    --ground_truth_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_3_steps.json \
-    --postfix _3_steps"
-    """
+"""
+Example:
+sbatch --time=00:01:00 --wrap="python3 sft/evaluate.py \
+--eval_folder_path  /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/moe--filter-previous-data/8/1 \
+--final_result      /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/moe--filter-previous-data/8/1/final_results.json \
+--ground_truth_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/moe--filter-previous-data/8/test.json"
+"""

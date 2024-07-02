@@ -25,17 +25,10 @@ def add_adapter_model_folder_to(target_dir):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--target_dir", help="The directory that contains the checkpoints")
+    parser.add_argument("--target_dir", help="The directory that contains the checkpoints", default="/cluster/work/lawecon/Work/mbraasch/output")
     args = parser.parse_args()
     add_adapter_model_folder_to(args.target_dir)
 
 """
-sbatch --wrap="python3 sft/add_adapter_model.py \
-    --target_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--4"
-sbatch --wrap="python3 sft/add_adapter_model.py \
-    --target_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--5"
-sbatch --wrap="python3 sft/add_adapter_model.py \
-    --target_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--6"
-sbatch --wrap="python3 sft/add_adapter_model.py \
-    --target_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/test_best_2_and_3_step_solver--7"
+sbatch --wrap="python3 sft/add_adapter_model.py"
 """

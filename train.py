@@ -44,13 +44,19 @@ def load_model_and_tokenizer_unsloth(model_name_or_path):
     return model, tokenizer
 
 def load_model_and_tokenizer(model_name_or_path):
+    kwargs = {}
+    # if "gemma-1.1-7b-it" in model_name_or_path:
+    #     kwargs = {
+    #         "attn_implementation": "eager"
+    #     }
     model = AutoModelForCausalLM.from_pretrained(
         model_name_or_path,
         cache_dir=os.environ["HF_HOME"],
         device_map="auto",
         torch_dtype=torch.bfloat16,
         trust_remote_code=True,
-        local_files_only=False
+        local_files_only=False,
+        **kwargs
     )
 
     lora_config = LoraConfig(
@@ -75,14 +81,33 @@ def load_model_and_tokenizer(model_name_or_path):
     model.config.use_cache = False
     model.config.torch_dtype = torch.bfloat16 #(torch.float32 if args.fp16 else (torch.bfloat16 if args.bf16 else torch.float32))
 
+    kwargs = {
+        "use_fast": False
+    }
+    if "stablelm-3b-4e1t" in model_name_or_path:
+        kwargs["use_fast"] = True
     tokenizer = AutoTokenizer.from_pretrained(
         model_name_or_path,
         cache_dir=os.environ["HF_HOME"],
         padding_side="right",
-        use_fast=False,
         trust_remote_code=True,
-        local_files_only=False
+        local_files_only=False,
+        **kwargs
     )
+
+    added_pad_token = False
+    if "Llama-3" in model_name_or_path:
+        tokenizer.add_special_tokens({'pad_token': '<|pad|>'})
+        model.resize_token_embeddings(len(tokenizer))
+        added_pad_token = True
+    elif "Mistral-7B" in model_name_or_path:
+        tokenizer.add_special_tokens({'pad_token': '<pad>'})
+        added_pad_token = True
+    elif "stablelm-3b-4e1t" in model_name_or_path:
+        tokenizer.add_special_tokens({'pad_token': '<|endoftext|>'})
+    if added_pad_token:
+        print(f"Added pad token to tokenizer: {tokenizer.pad_token}")
+
     print("PAD Token:", tokenizer.pad_token, tokenizer.pad_token_id)
     print("BOS Token", tokenizer.bos_token, tokenizer.bos_token_id)
     print("EOS Token", tokenizer.eos_token, tokenizer.eos_token_id)
@@ -165,9 +190,13 @@ def train_tokenize_function(examples, tokenizer):
     ]
     
     # Print formatted example for safety check
-    #source, target = list(zip(sources, targets))[1]
-    #print(f"Source:\n---\n{source}\n---\n")
-    #print(f"Target:\n---\n{target}\n---\n")
+    source, target = list(zip(sources, targets))[1]
+    print(f"Source:\n---\n{source}\n---\n")
+    print(f"Target:\n---\n{target}\n---\n")
+
+    # print("Exiting for safety check")
+    # import sys
+    # sys.exit(0)
     
     return preprocess(sources, targets, tokenizer)
 

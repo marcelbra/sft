@@ -2,7 +2,7 @@ import os
 import json
 
 from typing import List
-from argparse import ArgumentParser, Namespace
+from argparse import ArgumentParser
 
 from tqdm import tqdm
 from vllm import SamplingParams, LLMEngine, EngineArgs
@@ -10,19 +10,7 @@ from vllm.lora.request import LoRARequest
 
 from evaluate import calc_metrics
 from prompting import build_source_prompt
-
-def get_inference_arguments() -> Namespace:
-    parser = ArgumentParser()
-    parser.add_argument("--run_name", type=str, default=None)
-    parser.add_argument("--data_path", type=str, help="Adds a default data directory to the front, only the json specification is needed.", default=None)
-    parser.add_argument("--instruction", type=str, default="Solve the given math problem step by step and put your final answer after 'Final answer: '.")
-    parser.add_argument("--model_name_or_path", type=str, default="google/gemma-2b-it")
-    parser.add_argument("--output_dir", type=str, help="Specifies the path to the directory where everything is happening.", default="/cluster/work/lawecon/Work/mbraasch/output/")
-    parser.add_argument("--data_dir", type=str, help="Adds a default data directory to the front, only the json specification is needed.",default="/cluster/work/lawecon/Work/mbraasch/data")
-    parser.add_argument("--target_file_name", type=str, default="next_step_predictions.json")
-    parser.add_argument("--start_from", type=int, default=None)
-    parser.add_argument("--amount_samples", type=int, default=None)
-    return parser.parse_args([])
+from transformers import AutoTokenizer
 
 
 def get_max_step_adapter_name(output_dir):
@@ -41,15 +29,34 @@ def format_question(question: str, formatting_template: str):
 
 def initialize_engine(model_name_or_path) -> LLMEngine:
     print("Initialize the LLMEngine.")
+    kwargs = {}
+    if ("phi" in model_name_or_path.lower()):
+        kwargs = {
+            "trust_remote_code": True,
+            "max_num_batched_tokens": 64000,
+            "max_model_len": 22200
+        }
+    if ("mistral" in model_name_or_path.lower()):
+        kwargs = {
+            "gpu_memory_utilization": 1,
+            "max_num_batched_tokens": 64000,
+            "max_model_len": 15000
+        }
+    if ("gemma-1.1-7b-it" in model_name_or_path.lower()):
+        kwargs = {
+            "gpu_memory_utilization": 1,
+            "max_model_len": 5200
+        }
+
+    print(f"Setting kwargs:")
+    print(*list(kwargs.items()), sep="\n")
     engine_args = EngineArgs(
         model=model_name_or_path,
         enable_lora=True,
         max_loras=1,
         max_lora_rank=64,
         max_num_seqs=256,
-        trust_remote_code=True,
-        max_num_batched_tokens=64000,
-        max_model_len=22200
+        **kwargs
     )
     return LLMEngine.from_engine_args(engine_args)
 
@@ -284,7 +291,7 @@ def process_requests(engine: LLMEngine, data: List):
 def run_inference(
     run_name: str,
     model_name_or_path: str,
-    data_dir = "/cluster/work/lawecon/Work/mbraasch/data/gsm8k_test.json",
+    data_dir: str,
     previous_next_steps: str = None,
     last_step: bool = False,
     postfix: str = "",
@@ -320,49 +327,17 @@ if __name__ == "__main__":
     parser.add_argument("--model_name_or_path", type=str, required=True)
     parser.add_argument("--previous_next_steps", type=str, default=None)
     parser.add_argument("--postfix", type=str, default="")
-    parser.add_argument("--eos_token", type=str, default="<eos>")
-    parser.add_argument("--data_dir", type=str, default="/cluster/work/lawecon/Work/mbraasch/data")
+    parser.add_argument("--data_dir", type=str, default="/cluster/work/lawecon/Work/mbraasch/data/gsm8k_test.json")
     args = parser.parse_args()
 
+    kwargs = {}
+    if ("phi" in args.model_name_or_path.lower()):
+        kwargs["trust_remote_code"] = True
     run_inference(
         run_name=args.run_name,
         model_name_or_path=args.model_name_or_path,
         previous_next_steps=args.previous_next_steps,
         postfix=args.postfix,
-        eos_token="<|endoftext|>",
-        data_dir=args.data_dir
+        eos_token=AutoTokenizer.from_pretrained(args.model_name_or_path, **kwargs).eos_token,
+        data_dir=args.data_dir,
     )
-"""
-sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
-    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/3 \
-    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
-    --postfix _test_2_steps \
-    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_2_steps.json"
-sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
-    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/3 \
-    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
-    --postfix _test_3_steps \
-    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_3_steps.json"
-
-sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
-    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/34 \
-    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
-    --postfix _test_2_steps \
-    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_2_steps.json"
-sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
-    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/34 \
-    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
-    --postfix _test_3_steps \
-    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_3_steps.json"
-
-sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
-    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/baseline \
-    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
-    --postfix _test_2_steps \
-    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_2_steps.json"
-sbatch --gpus=rtx_3090:1 --mem-per-cpu=8G --time=00:10:00 --wrap="python3 sft/inference.py \
-    --run_name /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/baseline \
-    --model_name_or_path microsoft/Phi-3-mini-128k-instruct \
-    --postfix _test_3_steps \
-    --data_dir /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/gsm8k-gt/upscale_steps/test_3_steps.json"
-"""
