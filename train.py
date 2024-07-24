@@ -184,7 +184,7 @@ def train_tokenize_function(previous_step_n, first_step_data, type_, examples, t
         build_source_prompt(question, steps, previous_step_n, first_step_data, type_)
         for question, steps in zip(
             examples['source_question'],
-            examples['target_steps'] # if not previous_step_n else examples['target_steps']
+            examples['target_steps']
         )
     ]
     targets = [
