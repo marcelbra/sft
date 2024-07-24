@@ -1,11 +1,15 @@
 import os
 import json
 import torch
+import datasets
+
+import pandas as pd
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Dict, Sequence
+from typing import Dict, Sequence, Optional
 from argparse import ArgumentParser
+from functools import partial
 
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
@@ -86,6 +90,8 @@ def load_model_and_tokenizer(model_name_or_path):
     }
     if "stablelm-3b-4e1t" in model_name_or_path:
         kwargs["use_fast"] = True
+    if "llama" in model_name_or_path:
+        kwargs["model_max_length"] = 4000
     tokenizer = AutoTokenizer.from_pretrained(
         model_name_or_path,
         cache_dir=os.environ["HF_HOME"],
@@ -173,12 +179,12 @@ class DataCollatorForSupervisedDataset(object):
         )
 
 
-def train_tokenize_function(examples, tokenizer):
+def train_tokenize_function(previous_step_n, first_step_data, type_, examples, tokenizer):
     sources = [
-        build_source_prompt(question, steps)
+        build_source_prompt(question, steps, previous_step_n, first_step_data, type_)
         for question, steps in zip(
             examples['source_question'],
-            examples['source_steps']
+            examples['target_steps'] # if not previous_step_n else examples['target_steps']
         )
     ]
     targets = [
@@ -200,19 +206,49 @@ def train_tokenize_function(examples, tokenizer):
     
     return preprocess(sources, targets, tokenizer)
 
-def load_data(data_path, tokenizer, max_train_samples=None):
+def load_data(
+    data_path: str,
+    tokenizer: AutoTokenizer,
+    max_train_samples: Optional[int] = None,
+    delete_longest_n: Optional[int] = None,
+    previous_step_n: Optional[str] = None,
+    first_step_path: Optional[str] = None,
+    type_: Optional[str] = None
+):
 
     dataset = load_dataset(
         'json',
         data_files=data_path,
         split="train",
     )
+    if delete_longest_n:
+        lengths = {
+            i: len(element["target_steps"]) + len(element["source_question"])
+            for i, element in enumerate(dataset)
+        }
+        delete = [
+            index for index, _ in 
+            sorted(lengths.items(), key=lambda x: x[1], reverse=True)[:delete_longest_n]
+        ]
+        dataset = datasets.Dataset.from_pandas(pd.DataFrame(data=[
+            element for i, element in enumerate(dataset) if i not in delete
+        ]))
 
     if max_train_samples:
         dataset = dataset.select(range(max_train_samples))
 
+    first_step_data = None
+    if first_step_path:
+        with open(first_step_path, "r") as f:
+            first_step_data = json.load(f)
+
     return dataset.map(
-        train_tokenize_function,
+        partial(
+            train_tokenize_function,
+            previous_step_n,
+            first_step_data,
+            type_
+        ),
         batched=True,
         batch_size=3000,
         num_proc=32,
@@ -279,7 +315,15 @@ def run(config):
         model, tokenizer = load_model_and_tokenizer(config["model_name_or_path"])
 
     print("Loading data")
-    train_dataset = load_data(config["data_path"], tokenizer, max_train_samples=None)
+    train_dataset = load_data(
+        config["data_path"],
+        tokenizer,
+        max_train_samples=None,
+        delete_longest_n=None,
+        previous_step_n=config["previous_step_n"],
+        first_step_path=config["first_step_path"],
+        type_=config["type"]
+        )
     data_collator = DataCollatorForSupervisedDataset(tokenizer)
     
     print("Setting up training")
@@ -294,11 +338,17 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--run_name", type=str, required=True)
     parser.add_argument("--model_name_or_path", type=str, default=None)
+    parser.add_argument("--previous_step_n", type=int, default=None)
+    parser.add_argument("--first_step_path", type=str, default=None)
+    parser.add_argument("--type", type=str, default="training", choices=["training", "inference"])
     args = parser.parse_args()
     
     config = {
         "data_path": args.data_path,
         "run_name": args.run_name,
         "model_name_or_path": args.model_name_or_path,
+        "previous_step_n": args.previous_step_n,
+        "first_step_path": args.first_step_path,
+        "type": args.type
     }
     run(config)

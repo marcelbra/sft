@@ -3,44 +3,22 @@ import json
 
 from utils import nested_dict
 
+from typing import Optional
 from collections import defaultdict
 from argparse import ArgumentParser
+from collections import Counter  
 
-# def format_number(input_string: str) -> int:
-#     input_string = input_string \
-#         .replace(',', '') \
-#         .replace('%', '') \
-#         .replace('$', '') \
-#         .replace('美元', '') \
-#         .replace('4800/1000=', '') \
-#         .replace('7:00 AM', '7') \
-#         .replace('100-30=<<100-30=70>>70 more than Jill', '70') \
-#         .replace('150kg', '150') \
-#         .replace('th place', '') \
-#         .replace('/year', '') \
-#         .replace('/month', '') \
-#         .replace('/week', '') \
-#         .replace('/day', '') \
-#         .replace('/hour', '') \
-#         .replace('/minute', '') \
-#         .replace('cm', '') \
-#         .replace('ml', '') \
-#         .replace('m', '') \
-#         .replace('kg', '') \
-#         .replace('g', '') \
-#         .replace('/task', '') \
-#         .replace('\"', '') \
-#         .replace('/sandwich', '') \
-#         .split()[0]
-#     if input_string.endswith("."):
-#         input_string = input_string[:-1]
-#     return float(input_string)
+def evaluate(
+        final_results: str,
+        eval_folder_path: str,
+        ground_truth_path: str,
+        postfix: Optional[str] = "",
+        type_: Optional[str] = "normal"
+    ):
 
-# def filter_(by: str, step: int, question: str) -> str:
-#     return format_number(question.split(by)[step].split("\n")[0])
-
-def evaluate(final_results, eval_folder_path, ground_truth_path, postfix):
-
+    # if type_=="oracle":
+    #     comparison = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    # else:
     comparison = defaultdict(lambda: defaultdict(list))
     
     # Predictions
@@ -48,7 +26,10 @@ def evaluate(final_results, eval_folder_path, ground_truth_path, postfix):
         with open(final_result, "r") as f:
             data = json.load(f)
         for element in data:
-            question = element["instruction"].split("\n\n### Input:\n")[1].split("\n\n### Response:\n")[0]
+            if type_=="inference":
+                question = element["instruction"].split("\n\n### Input:\nQuestion: ")[1].split("\n\nPossible first steps:")[0].split("\n<step ")[0]
+            elif type_=="sample" or type_=="oracle":
+                question = element["instruction"].split("\n\n### Input:\nQuestion: ")[1].split("\n\n### Response:")[0].split("\n<step ")[0]
             if "result" in element:
                 prediction = element["result"]
             else:
@@ -57,14 +38,17 @@ def evaluate(final_results, eval_folder_path, ground_truth_path, postfix):
                     prediction = split_by_answer[-1]
                 else:
                     continue
-            comparison[question]["prediction"] = prediction
+            if type_=="oracle":
+                comparison[question]["prediction"].append(prediction)
+            else:   
+                comparison[question]["prediction"] = prediction
                 
     # Ground truth
     with open(ground_truth_path, "r") as f:
         ground_truth = json.load(f)
     for element in ground_truth:
         question = element["source_question"]
-        comparison[question]["ground_truth"] = element["target_result"].replace(",", "")
+        comparison[question]["ground_truth"] = element["target_result"] #.replace(",", "")
     
     # Write the comparison to a file
     with open(os.path.join(eval_folder_path, f"comparison{postfix}.json"), "w") as f:
@@ -78,8 +62,25 @@ def evaluate(final_results, eval_folder_path, ground_truth_path, postfix):
         if "prediction" not in data or "ground_truth" not in data:
             continue
         predicted += 1
-        if data["prediction"] == data["ground_truth"]:
-            correct += 1
+        if type_=="oracle":
+            majority_vote = Counter(data["prediction"]).most_common(1)[0][0]  
+            print("Question:")
+            print(question)
+            print("--------")
+            print(*data["prediction"], sep="\n")
+            print("--------")
+            print(f"The correct one was {data['ground_truth']}")
+            print(f"which was {'not' if not majority_vote == data['ground_truth'] else ''} met")
+            
+            if any([x == data['ground_truth'] for x in data['prediction']]) and not majority_vote == data['ground_truth']:
+                print(f"But the solution was in there!")
+
+            # if any([x == data["ground_truth"] for x in data["prediction"]]):
+            if majority_vote == data["ground_truth"]:
+                correct += 1
+        else:
+            if data["prediction"] == data["ground_truth"]:
+                correct += 1
     
     accuracy = correct / total
     
@@ -107,7 +108,6 @@ def calc_metrics(
     results = nested_dict(n=2, type_=dict)
     with open(test_data_path, "r") as f:
         ground_truth = json.load(f)
-        print(len(ground_truth))
     for element in ground_truth:
         question = element["source_question"]
         results[question]["ground_truth"] = element["target_result"]
@@ -118,7 +118,8 @@ def calc_metrics(
         predicted_result = json.load(f)
 
     for element in predicted_result:
-        question = element["instruction"].split("\n\n### Input:\n")[1].split("\n\n### Response:\n")[0]
+        # question = element["instruction"].split("\n\n### Input:\n")[1].split("\n\n### Response:\n")[0]
+        question = element["instruction"].split("\n\n### Input:\nQuestion: ")[1].split("\n\n### Response:")[0]
         results[question]["predicted"] = element["result"]
 
     # For those where there is no prediction, add "None" as a prediction to the results dict
@@ -149,20 +150,12 @@ def calc_metrics(
     print("Done.")
 
 if __name__ == "__main__":
-
-    argparser = ArgumentParser()
-    argparser.add_argument("--eval_folder_path", type=str, required=True)
-    argparser.add_argument("--ground_truth_path", type=str, required=True)
-    argparser.add_argument("--final_result", type=str, required=True, nargs='+')
-    argparser.add_argument("--postfix", type=str, default="")
-    args = argparser.parse_args()
-    # print(args.final_result[1])
-    evaluate(args.final_result, args.eval_folder_path, args.ground_truth_path, args.postfix)
-
-"""
-Example:
-sbatch --time=00:01:00 --wrap="python3 sft/evaluate.py \
---eval_folder_path  /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/moe--filter-previous-data/8/1 \
---final_result      /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/moe--filter-previous-data/8/1/final_results.json \
---ground_truth_path /cluster/work/lawecon/Work/mbraasch/output/phi-3-mini-instruct/moe--filter-previous-data/8/test.json"
-"""
+    parser = ArgumentParser()
+    parser.add_argument("--eval_folder_path", type=str, required=True)
+    parser.add_argument("--ground_truth_path", type=str, required=True)
+    parser.add_argument("--final_result", type=str, required=True, nargs='+')
+    parser.add_argument("--postfix", type=str, default="")
+    parser.add_argument("--type", type=str, default="training", choices=["training", "inference", "oracle"])
+    args = parser.parse_args()
+    print(args.final_result)
+    evaluate(args.final_result, args.eval_folder_path, args.ground_truth_path, args.postfix, args.type)
