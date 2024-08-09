@@ -23,22 +23,30 @@ def evaluate(
     
     # Predictions
     for final_result in final_results:
+
         with open(final_result, "r") as f:
             data = json.load(f)
         for element in data:
-            if type_=="inference":
+
+            if type_ in ["inference", "majority"]:
                 question = element["instruction"].split("\n\n### Input:\nQuestion: ")[1].split("\n\nPossible first steps:")[0].split("\n<step ")[0]
-            elif type_=="sample" or type_=="oracle":
-                question = element["instruction"].split("\n\n### Input:\nQuestion: ")[1].split("\n\n### Response:")[0].split("\n<step ")[0]
+            elif type_ in ["sample", "oracle", "normal"]:
+                question = element["instruction"].split("\n\n### Input:\nQuestion: ")[1].split("\n\n### Response:")[0].split("\n<step ")[0].replace("Question: ", "")
+            else:
+                raise ValueError("You must pass a `type_`!")
+            
             if "result" in element:
                 prediction = element["result"]
+            elif element["prediction"].startswith("<final answer>: "):
+                prediction = element["prediction"].replace("<final answer>: ", "")
             else:
-                split_by_answer = element["prediction"].split("Final answer: ")
+                split_by_answer = element["prediction"].split("<final answer>: ")
                 if len(split_by_answer) > 1:
                     prediction = split_by_answer[-1]
                 else:
                     continue
-            if type_=="oracle":
+
+            if type_ in ["oracle", "majority"]:
                 comparison[question]["prediction"].append(prediction)
             else:   
                 comparison[question]["prediction"] = prediction
@@ -62,7 +70,7 @@ def evaluate(
         if "prediction" not in data or "ground_truth" not in data:
             continue
         predicted += 1
-        if type_=="oracle":
+        if type_=="oracle" or type_=="majority":
             majority_vote = Counter(data["prediction"]).most_common(1)[0][0]  
             print("Question:")
             print(question)
@@ -98,56 +106,6 @@ def evaluate(
             , f, indent=4, ensure_ascii=False)
     
     print(f"Accuracy: {round(accuracy * 100, 4)}%")
-    print()
-
-
-def calc_metrics(
-    test_data_path = "/cluster/work/lawecon/Work/mbraasch/output/gemma-2b-it/data/test.json",
-    output_dir ="/cluster/work/lawecon/Work/mbraasch/output/gemma-2b-it"
-    ):
-    results = nested_dict(n=2, type_=dict)
-    with open(test_data_path, "r") as f:
-        ground_truth = json.load(f)
-    for element in ground_truth:
-        question = element["source_question"]
-        results[question]["ground_truth"] = element["target_result"]
-
-    # Get prediction
-    predicted_result_path = os.path.join(output_dir, "final_results.json")
-    with open(predicted_result_path, "r") as f:
-        predicted_result = json.load(f)
-
-    for element in predicted_result:
-        # question = element["instruction"].split("\n\n### Input:\n")[1].split("\n\n### Response:\n")[0]
-        question = element["instruction"].split("\n\n### Input:\nQuestion: ")[1].split("\n\n### Response:")[0]
-        results[question]["predicted"] = element["result"]
-
-    # For those where there is no prediction, add "None" as a prediction to the results dict
-    for question in results:
-        if "predicted" not in results[question]:
-            results[question]["predicted"] = "None"
-
-    # Calculate error
-    for question in results:
-        results[question]["correct"] = results[question]["predicted"] == results[question]["ground_truth"]
-
-    # Write results to file
-    results_path = os.path.join(output_dir, "final_comparison.json")
-    with open(results_path, "w") as f:
-        json.dump(results, f, indent=4, ensure_ascii=False)
-
-    # Write metrics to file
-    metrics = {
-        "n": len(results),
-        "correct": sum([results[question]["correct"] for question in results]),
-        "incorrect": len(results) - sum([results[question]["correct"] for question in results]),
-        "accuracy": sum([results[question]["correct"] for question in results]) / len(results)
-    }
-
-    metrics_path = os.path.join(output_dir, "final_metrics.json")
-    with open(metrics_path, "w") as f:
-        json.dump(metrics, f, indent=4, ensure_ascii=False)
-    print("Done.")
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -155,7 +113,7 @@ if __name__ == "__main__":
     parser.add_argument("--ground_truth_path", type=str, required=True)
     parser.add_argument("--final_result", type=str, required=True, nargs='+')
     parser.add_argument("--postfix", type=str, default="")
-    parser.add_argument("--type", type=str, default="training", choices=["training", "inference", "oracle"])
+    parser.add_argument("--type", type=str, default="training", choices=["training", "inference", "oracle", "sample", "majority", "normal"])
     args = parser.parse_args()
     print(args.final_result)
     evaluate(args.final_result, args.eval_folder_path, args.ground_truth_path, args.postfix, args.type)

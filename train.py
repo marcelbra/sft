@@ -180,29 +180,35 @@ class DataCollatorForSupervisedDataset(object):
 
 
 def train_tokenize_function(previous_step_n, first_step_data, type_, examples, tokenizer):
-    sources = [
-        build_source_prompt(question, steps, previous_step_n, first_step_data, type_)
-        for question, steps in zip(
-            examples['source_question'],
-            examples['target_steps']
+    
+    sources = []
+    targets = []
+    replacements = []
+    all_new_target_steps = []
+    
+    for question, steps in zip(examples['source_question'], examples['target_steps']):
+        prompt, replaced, new_target_steps = build_source_prompt(
+            question,
+            steps,
+            previous_step_n,
+            first_step_data, 
+            type_
         )
-    ]
-    targets = [
-        build_target_prompt(steps, result, tokenizer.eos_token)
-        for steps, result in zip(
-            examples['target_steps'],
-            examples['target_result']
-        )
-    ]
+        sources.append(prompt)
+        replacements.append(replaced)
+        all_new_target_steps.append(new_target_steps)
+    
+    if new_target_steps:
+        examples['target_steps'] = all_new_target_steps
+    
+    for steps, result, replace in zip(examples['target_steps'], examples['target_result'], replacements):
+        prompt = build_target_prompt(steps, result, tokenizer.eos_token, replace, type_)
+        targets.append(prompt)
     
     # Print formatted example for safety check
     source, target = list(zip(sources, targets))[1]
     print(f"Source:\n---\n{source}\n---\n")
     print(f"Target:\n---\n{target}\n---\n")
-
-    # print("Exiting for safety check")
-    # import sys
-    # sys.exit(0)
     
     return preprocess(sources, targets, tokenizer)
 
@@ -239,6 +245,7 @@ def load_data(
 
     first_step_data = None
     if first_step_path:
+        print(f"Loaded first step data from {first_step_path}.")
         with open(first_step_path, "r") as f:
             first_step_data = json.load(f)
 
@@ -255,7 +262,7 @@ def load_data(
         remove_columns=dataset.column_names,
         load_from_cache_file=False,
         desc="Running Encoding",
-        fn_kwargs={ "tokenizer": tokenizer }
+        fn_kwargs={"tokenizer": tokenizer}
     )
 
 def setup_trainer(model, tokenizer, train_dataset, data_collator, output_dir):
@@ -340,7 +347,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_name_or_path", type=str, default=None)
     parser.add_argument("--previous_step_n", type=int, default=None)
     parser.add_argument("--first_step_path", type=str, default=None)
-    parser.add_argument("--type", type=str, default="training", choices=["training", "inference"])
+    parser.add_argument("--type", type=str, default="training", choices=["training", "inference", "training_tf", "new_dawn"])
     args = parser.parse_args()
     
     config = {

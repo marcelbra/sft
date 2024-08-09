@@ -9,7 +9,6 @@ from tqdm import tqdm
 from vllm import SamplingParams, LLMEngine, EngineArgs
 from vllm.lora.request import LoRARequest
 
-from evaluate import calc_metrics
 from prompting import build_source_prompt
 from transformers import AutoTokenizer
 
@@ -24,7 +23,7 @@ def get_max_step_adapter_name(output_dir):
     return os.path.join(output_dir, f"{ckpt_name}{max_step}", "adapter_model")
 
 
-def initialize_engine(model_name_or_path) -> LLMEngine:
+def initialize_engine(model_name_or_path, gpus) -> LLMEngine:
     print("Initialize the LLMEngine.")
     kwargs = {}
     if ("phi" in model_name_or_path.lower()):
@@ -44,7 +43,12 @@ def initialize_engine(model_name_or_path) -> LLMEngine:
             "gpu_memory_utilization": 1,
             "max_model_len": 5200
         }
-
+    if ("qwen" in model_name_or_path.lower()):
+        kwargs = {
+            "max_num_batched_tokens": 64000,
+            "max_model_len": 32000
+        }
+    
     print(f"Setting kwargs:")
     print(*list(kwargs.items()), sep="\n")
     engine_args = EngineArgs(
@@ -53,20 +57,28 @@ def initialize_engine(model_name_or_path) -> LLMEngine:
         max_loras=1,
         max_lora_rank=64,
         max_num_seqs=256,
-        # tensor_parallel_size=4,
+        tensor_parallel_size=gpus,
         **kwargs
     )
     return LLMEngine.from_engine_args(engine_args)
 
 
-def get_sampling_params(eot_token):
+def get_sampling_params(
+        eot_token: str,
+        temperature: float = 0.0
+    ):
     print("Initalizating sampling params.")
-    return SamplingParams(
-        temperature=1.0,
+    if eot_token == "linebreak":
+        stop = ["\n"]
+    else:
+        stop = [eot_token]
+    params = SamplingParams(
+        temperature=temperature,
         max_tokens=2048,
-        # stop=["\n"],
-        stop=[eot_token]
+        stop=stop
     )
+    print(f"Sampling params:\n{params}")
+    return params
 
 
 def get_lora_request(lora_path: str):
@@ -122,32 +134,44 @@ def write_results(run_name, next_steps, final_result, postfix, experiment):
             next_steps = format(next_steps)
 
         with open(next_step_path, "w") as f:
-            json.dump(next_steps, f, indent=4, ensure_ascii=False)
+            json.dump(next_steps, f, indent=4)#, ensure_ascii=False)
 
         file_name = f"final_results{postfix}.json"
         final_results_path = os.path.join(run_name, file_name)
         print(f"Writing {final_results_path}.")
         with open(final_results_path, "w") as f:
-            json.dump(final_result, f, indent=4, ensure_ascii=False)
+            json.dump(final_result, f, indent=4)#, ensure_ascii=False)
 
 
 def inference_TEC(data, sampling_params, lora_request):
     formatted_data = []
-    for element in data:
-        if "Final answer" in element["prediction"]:
+    for i, element in enumerate(data):
+        if "<final answer>" in element["prediction"]:
             continue
-        question, steps = element["instruction"].split("\n\n### Input:\n")[1].split("\n\n### Response:\n")
-        maybe_linebreak = "\n" if not steps.endswith("\n") else ""
+        question, steps = element["instruction"].split("\n\n### Input:\n")[1].split("\n\n### Response:")
+        question.replace("Question: ", "")
+        maybe_linebreak = "\n" if not steps.endswith("\n") and steps else ""
+        instruction, replaced, new_target_steps = build_source_prompt(
+            question=question,
+            gt_steps=element["prediction"]
+            # gt_steps=steps + maybe_linebreak + element["prediction"]
+        )
+
+        instruction += "\n" # !!!!! ACHTUNG KANN BUGS MACHEN NUR FÜR JETZT !!!!!!
+
+        if i <= 32:
+            print(instruction)
+            print("---")
+
         formatted_data.append(
             {
-                "instruction": build_source_prompt(
-                    question=question,
-                    steps=steps + maybe_linebreak + element["prediction"]
-                ),
+                "instruction": instruction,
                 "sampling_params": sampling_params,
                 "lora_request": lora_request
             }
         )
+    
+    return formatted_data
 
     
 def inference_sample(data, sampling_params, lora_request, previous_step_n, n):
@@ -162,7 +186,7 @@ def inference_sample(data, sampling_params, lora_request, previous_step_n, n):
         
         question = element["instruction"].split("\n\n### Input:\nQuestion: ")[1].split("\n\n### Response:")[0].split("\n<step ")[0]
         step = element["prediction"].split("\n")[previous_step_n-1].replace(f"<step {previous_step_n}>: ", "")
-        instruction = build_source_prompt(
+        instruction, replaced, new_target_steps = build_source_prompt(
             question=question,
             steps=step,
             previous_step_n=previous_step_n
@@ -191,19 +215,28 @@ def inference_normal(data_dir, sampling_params, lora_request, n):
         data = json.load(f)
 
     print("Format data.")
-    
-    return [
-        {
-            "instruction": build_source_prompt(
-                question=element["source_question"],
-                steps=element["source_steps"]
-            ),
-            "sampling_params": sampling_params,
-            "lora_request": lora_request
-        }
-        for _ in range(n)
-        for element in data
-    ]
+    formatted_data = []
+    print("Sample data:")
+    for i in range(n):
+        for element in data:
+            instruction, replaced, new_target_steps = build_source_prompt(
+                element["source_question"],
+                element["source_steps"]
+            )
+            
+            # if not i:
+            #     print(instruction)
+            #     print("---")
+            
+            formatted_data.append(
+                {
+                    "instruction": instruction,
+                    "sampling_params": sampling_params,
+                    "lora_request": lora_request
+                }
+            )
+            
+    return formatted_data
 
 
 def inference_encoder(
@@ -215,11 +248,12 @@ def inference_encoder(
     ):
 
     formatted_data = []
+
     for question, predictions in data.items():
 
-        instruction = build_source_prompt(
+        instruction, replaced, new_target_steps = build_source_prompt(
             question=question,
-            steps="",
+            gt_steps="",
             first_step_data=predictions,
             type_=type_
         )
@@ -266,6 +300,7 @@ def format_data(
             pass
             # formatted_data = inference_oracle(data, sampling_params, lora_request, n, type_)
     else:
+        print("Conducting normal inference.")
         formatted_data = inference_normal(data_dir, sampling_params, lora_request, n)
 
     if amount_samples:
@@ -274,7 +309,7 @@ def format_data(
     return formatted_data
 
 
-def filter_out_results(results, delimiter = "\nFinal answer: "):
+def filter_out_results(results, delimiter = "\n<final answer>: "):
 
     print("Filter out results.")
     next_steps = []
@@ -337,9 +372,14 @@ def run_inference(
     eos_token: str = "<eos>",
     previous_step_n: int = 0,
     experiment: str = "normal",
-    type_: Optional[str] = None
+    type_: Optional[str] = None,
+    temperature: float = 0.0,
+    gpus: int = 1
 ):          
-    sampling_params = get_sampling_params(eot_token=eos_token)
+    sampling_params = get_sampling_params(
+        eot_token=eos_token,
+        temperature=temperature
+    )
     lora_request = get_lora_request(lora_path=run_name)
     data = format_data(
         data_dir=data_dir,
@@ -351,7 +391,7 @@ def run_inference(
         experiment=experiment,
         type_=type_
     )
-    engine = initialize_engine(model_name_or_path)
+    engine = initialize_engine(model_name_or_path, gpus)
     results = process_requests(engine, data)
     next_steps, done = filter_out_results(results)
     write_results(run_name, next_steps, done, postfix, experiment)
@@ -367,13 +407,23 @@ if __name__ == "__main__":
     parser.add_argument("--previous_step_n", type=int)
     parser.add_argument("--data_dir", type=str, default="/cluster/work/lawecon/Work/mbraasch/data/gsm8k_test.json")
     parser.add_argument("--experiment", type=str, default="encoder")
-    parser.add_argument("--type", type=str, default="training", choices=["training", "inference", "oracle"])
+    parser.add_argument("--type", type=str, default="training", choices=["training", "inference_tf", "inference", "oracle", "new_dawn"])
+    parser.add_argument("--eos_token", type=str)
+    parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--n", type=int, default=1)
+    parser.add_argument("--gpus", type=int, default=1)
     args = parser.parse_args()
 
     kwargs = {}
     if ("phi" in args.model_name_or_path.lower()):
         kwargs["trust_remote_code"] = True
+    if not args.eos_token:
+        args.eos_token = AutoTokenizer.from_pretrained(args.model_name_or_path, **kwargs).eos_token
+    print(f"EOS token: '{args.eos_token}'")
+    print(f"Temperature: {args.temperature}")
+    print(*list(vars(args).items()), sep="\n")
+    
+
     run_inference(
         run_name=args.run_name,
         model_name_or_path=args.model_name_or_path,
@@ -381,8 +431,10 @@ if __name__ == "__main__":
         data_dir=args.data_dir,
         n=args.n,
         postfix=args.postfix,
-        eos_token=AutoTokenizer.from_pretrained(args.model_name_or_path, **kwargs).eos_token,
+        eos_token=args.eos_token,
         previous_step_n=args.previous_step_n,
         experiment=args.experiment,
-        type_=args.type
+        type_=args.type,
+        temperature=args.temperature,
+        gpus=args.gpus
     )
